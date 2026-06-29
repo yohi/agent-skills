@@ -1,0 +1,23 @@
+{
+  "skill_name": "github-release-packages",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Node.jsライブラリ用の自動リリースワークフローをセットアップしてください。@myorg/mypackage をGitHub Packagesのnpmレジストリに公開したいです。デフォルトブランチはmainです。",
+      "expected_output": "`.github/workflows/release.yml` と必要な設定ファイルを作成し、release-please-actionを使ってリリースPRを作成し、GitHub Packagesのnpmレジストリに公開する。",
+      "files": [".github/workflows/release.yml", "release-please-config.json"]
+    },
+    {
+      "id": 2,
+      "prompt": "新しいリリースが作成されたときにDockerイメージを自動的にビルドしてghcr.ioにプッシュするGitHub Actionsワークフローを作成してください。リポジトリはmyorg/myappで、Dockerfileはルートにあります。",
+      "expected_output": "リリースバージョンでタグ付けされたDockerイメージをghcr.ioにビルド・プッシュする`.github/workflows/release.yml`を作成する。",
+      "files": [".github/workflows/release.yml"]
+    },
+    {
+      "id": 3,
+      "prompt": "Node.jsライブラリとDockerサービスのあるモノレポで、release-pleaseでバージョニングを行い、リリース時にnpmパッケージとDockerイメージの両方を公開したいです。デフォルトブランチはmainです。",
+      "expected_output": "npm公開とDockerイメージのビルド・プッシュの両方を処理する包括的な`.github/workflows/release.yml`を作成する。",
+      "files": [".github/workflows/release.yml", "release-please-config.json"]
+    }
+  ]
+}
