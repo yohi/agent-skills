@@ -1,10 +1,10 @@
 # Acceptance Evaluation Matrix
 
-Run the scenarios against mocks first and isolated, registered fixture
-environments second. Never use production secrets as test fixtures. Use
-synthetic parent credentials and disposable service resources. Record
-identifiers, statuses, and event order only; never record credential values or
-secret-bearing output.
+Use this matrix before operating against a production environment. Run every
+scenario against mocks first and isolated, registered fixture environments
+second. Never use production secrets as test fixtures. Use synthetic parent
+credentials and disposable service resources. Record identifiers, statuses, and
+event order only; never record credential values or secret-bearing output.
 
 The broker must pass every applicable scenario. A scenario is not applicable
 only when the registered service profile cannot support the capability under
