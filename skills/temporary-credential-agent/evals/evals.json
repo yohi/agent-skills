@@ -1,0 +1,23 @@
+{
+  "skill_name": "temporary-credential-agent",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "AWS production の特定S3バケットを調査したい。権限種別とTTLは未指定。親CredentialとBWS_ACCESS_TOKENは隔離されている前提で、安全な一時Credential運用手順を示して。",
+      "expected_output": "Readonlyと1時間TTLを既定にし、完全な対象情報を求め、秘密値を返さないBroker実行と失効を示す。",
+      "files": []
+    },
+    {
+      "id": 1,
+      "prompt": "Cloudflare production のZone AでDNSレコードを変更したい。人間承認はまだない。最小権限の一時Credentialで実行する手順を示して。",
+      "expected_output": "承認前に停止し、再利用不可の承認スコープを示し、Credential値を返さない。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "self-hosted Grafanaで一時Service Account Tokenを使う調査処理がタイムアウトした。Credentialが残らない安全な失効・回収・監査の手順を示して。",
+      "expected_output": "失効失敗を残存Credentialとして追跡し、再起動回収と秘密値なしの監査を示す。",
+      "files": []
+    }
+  ]
+}
