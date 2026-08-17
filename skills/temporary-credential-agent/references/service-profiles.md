@@ -14,16 +14,30 @@ profile missing any required mapping rejects the request.
 
 For every profile, maintain an administrator-owned operation map with these
 fields: `operation_id`, `access_mode`, `resource_matcher`, `service_actions`,
-`credential_kind`, `ttl_capability`, `revoke_operation`, and
-`state_check_operation`. Do not infer a map from natural-language intent.
+`credential_kind`, `ttl_capability`, `revoke_operation`,
+`revoke_retry_policy`, and `state_check_operation`. Do not infer a map from
+natural-language intent.
+
+`revoke_operation` must reference a distinct recovery operation with
+`access_mode=recovery`; it is not the user-requested writable operation.
+`revoke_retry_policy` must explicitly allow retries only for transient transport
+or service-unavailable failures after the service state check. Do not retry
+permanent authorization or invalid-identifier failures. If the result remains
+unknown, retain the pending record for recovery rather than replaying a user
+write.
 
 ## TTL and cleanup
 
-Request the supplied TTL exactly when supported. A shorter server-side TTL may
-be used only if it still permits the requested work and is recorded. If the
-service has no server-side TTL, the broker must create the pending-revocation
-record before handing the credential to its worker, then delete or revoke it in
-cleanup and recovery.
+Request the supplied TTL exactly when supported. If an exact TTL cannot be
+represented, reject it unless `ttl_capability=shorter_ttl_allowed` is explicitly
+declared in the operation map. That exception is valid only when the service
+reports a shorter server-applied value, the value still permits the requested
+work, and the value is recorded in `ttl_effective`. If the service cannot
+report the applied value, reject the request. A service with no server-side TTL
+must explicitly declare `ttl_capability=no_server_ttl`; the broker must create
+the pending-revocation record before handing the credential to its worker,
+record `ttl_effective=not_applicable`, and delete or revoke it in cleanup and
+recovery.
 
 ## Write uncertainty and retries
 

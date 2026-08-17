@@ -67,39 +67,74 @@ broker reads Bitwarden.
    expired, reused, or mismatched approval rejects the request.
 5. If a read operation needs a write permission, stop and request a new
    writable approval. Never upgrade, retry, or fall back automatically.
-6. If the exact scope or TTL cannot be represented, reject the request. Never
-   silently issue a broader scope or a credential valid longer than requested.
+6. If the exact scope cannot be represented, reject the request. If the exact
+   TTL cannot be represented, reject it unless the service profile explicitly
+   declares a safe exception. A `shorter_ttl_allowed` exception requires the
+   service to report a shorter value that still permits the work; record that
+   server-applied value in `ttl_effective`. A `no_server_ttl` profile must use
+   the pending-record cleanup and recovery path and record
+   `ttl_effective=not_applicable`. Never silently issue a broader scope or a
+   credential valid longer than requested.
 
 ## Broker-only credential lifecycle
 
 The AI-visible caller sends a structured request and receives only sanitized
 results. The broker performs this sequence:
 
-1. Recover outstanding credential records before handling new work.
+1. Recover outstanding issuance-intent, pending-revocation, and residue
+   records before handling new work.
 2. Validate registration, authorization, approval, operation allow-list, and
    requested TTL. Fail closed on any validation, Bitwarden, or service API
-   error.
-3. In the isolated issuer, use `bws` read operations only to obtain the parent
+   error. For every rejection before issuance, write a `request_rejected`
+   audit event before returning. Include only sanitized request fields,
+   authorization context, and the failure category and reason; never include
+   secret values or raw approval/error payloads. Set issuance and revocation
+   status to `not_issued`.
+3. Persist a secret-free issuance-intent record with `state=pre_issuance`
+   before reading the parent credential or calling a credential-issuance API.
+   The record must contain the request and authorization context, `work_id`,
+   and its requested TTL, but no credential value.
+4. In the isolated issuer, use `bws` read operations only to obtain the parent
    credential for `<service>-<environment>`. Do not pass the BWS token or
    parent credential to the worker.
-4. Issue a service-native temporary or revocable credential with the exact
-   operation and resource scope. Set a server-side expiry when supported.
-5. Persist a pending-revocation record containing only work ID, service,
-   credential identifier, target, creation time, expiry, and last revocation
-   result. Never persist a secret value.
+5. Issue a service-native temporary or revocable credential with the exact
+   operation and resource scope. Set a server-side expiry when supported. Mark
+   the intent `issued_unconfirmed`, reconcile the service state, and associate
+   `credential_identifier` before persisting the pending-revocation record.
+   The pending record must use the exact fields from `audit-schema.md`:
+   `work_id`, `service`, `environment`, `resource`, `credential_identifier`,
+   `created_at`, `expires_at`, `last_revocation_attempt_at`,
+   `last_revocation_result`, and `recovery_status`. Transition to
+   `credential_tracked` only after that record is durable. If issuance or
+   reconciliation is uncertain, transition to `recovery_pending`, do not start
+   the worker, and retain the intent for recovery. Never persist a secret value.
 6. Inject the temporary credential into one short-lived, allow-listed service
    CLI/API worker. The worker must not launch arbitrary commands or expose its
    environment. Use the credential only for the approved operation.
-7. Sanitize result, stdout, stderr, and errors before returning them. Do not
-   retry a write whose result is uncertain; return `outcome_unknown` instead.
-8. In a `finally`-equivalent cleanup path, revoke or delete the credential,
-   update the pending record, and write an audit event. A revocation failure is
-   a `credential_residue` error, never success.
+7. Sanitize result, stdout, stderr, errors, service responses, environment
+   dumps, command arguments, authorization headers, and credential JSON fields
+   before returning or persisting them. If sanitization cannot be confirmed,
+   discard the affected content, fail closed with `redaction_failure`, and
+   continue directly to cleanup without returning raw output. Do not retry a
+   write whose result is uncertain; return `outcome_unknown` instead.
+8. In a `finally`-equivalent cleanup path, transition to `cleanup_pending`,
+   revoke or delete the credential, update the pending record, and write an
+   audit event. A revocation failure is a `credential_residue` error, never
+   success. Cleanup is required even when sanitization fails.
+
+The lifecycle states are `pre_issuance`, `issued_unconfirmed`,
+`credential_tracked`, `worker_running`, `cleanup_pending`, `revoked`, `expired`,
+`rejected`, `recovery_pending`, and `credential_residue`. The allowed ordering
+is defined in [audit-schema.md](references/audit-schema.md); `revoked` and
+`expired` are the recoverable terminal outcomes.
 
 For a crash or forced termination, server-side TTL is the last safety layer.
-At the next broker start, inspect every pending record, confirm its state at
-the service, retry revocation when valid, and retain unresolved records for
-further recovery.
+At the next broker start, inspect every `issued_unconfirmed`,
+`recovery_pending`, and pending-revocation record, confirm its state at the
+service, associate a credential identifier when possible, and use the profile's
+dedicated recovery `revoke_operation`. Retry only the transient conditions
+declared by that operation's `revoke_retry_policy`; never reuse a user-requested
+writable operation retry. Retain unresolved records for further recovery.
 
 ## Result contract
 
@@ -127,9 +162,16 @@ Before considering a workflow safe, verify:
 
 - readonly defaults to one hour and does not receive write permissions;
 - writable issuance requires a scope-bound, unexpired human approval;
+- every pre-issuance rejection creates a secret-free `request_rejected` audit
+  event with `not_issued` statuses;
+- issuance intent is durable before issuance, and pending-revocation tracking
+  uses the canonical schema before worker start;
+- requested TTL is exact unless an explicit profile exception records the
+  effective value in `ttl_effective`;
 - no credential value appears in model-visible output, worker output, audit
   data, pending records, or normal process environments;
-- cleanup runs after success, failure, timeout, and interruption; and
+- cleanup runs after success, failure, timeout, interruption, and sanitization
+  failure, using the dedicated recovery revoke policy; and
 - failed cleanup remains visible as a tracked residue until confirmed revoked
   or expired.
 
