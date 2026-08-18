@@ -18,13 +18,15 @@ skills/
         └── run.sh
 ```
 
-## 移行済みスキル一覧
+## 登録スキル一覧
 
 | スキル名 | 役割 | 使う場面 | 補足 |
 |---|---|---|---|
 | `doc-sync-verifier` | ドキュメント整合性の検証 | 仕様書・設計書・表の不一致を裏取りしたいとき | ソースコードではなく文書だけを根拠に判断 |
 | `git-master` | Git 操作の安全な実行 | コミット分割、履歴整理、履歴調査をしたいとき | Conventional Commits（日本語）に対応 |
 | `github-quality-setup` | GitHub 品質・セキュリティ基盤の構築 | CodeRabbit / Dependabot / CodeQL / Semgrep / SonarCloud / Codecov などを入れたいとき | 参照資料として `references/tool-configs.md` と `evals/evals.json` を含む |
+| `github-release-packages` | リリース・パッケージ公開の自動化 | release-please による GitHub Releases 作成や npm / Docker (ghcr.io) / Python / Go / Rust 等のパッケージ公開を構築したいとき | 言語別設定 (`references/`)、マニフェストモードに対応 |
 | `makefile-organization` | Makefile の分割・整理 | 大きな Makefile を機能別に整理したいとき | 詳細仕様は `REFERENCE.md` に分離 |
+| `temporary-credential-agent` | 一時クレデンシャルによる安全なクラウド操作 | AWS / Cloudflare / Grafana / HCP Terraform 等に対して秘密値を隠蔽したまま最小権限で調査・設定を実行したいとき | Bitwarden Secrets Manager 連携、権限隔離・監査・回収ポリシーを定義 |
 
 必要なら、各スキル名から `skills/<name>/SKILL.md` を開いて詳細を確認してください。

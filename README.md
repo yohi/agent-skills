@@ -15,7 +15,9 @@ agent-skills/
 │   ├── doc-sync-verifier/
 │   ├── git-master/
 │   ├── github-quality-setup/
-│   └── makefile-organization/
+│   ├── github-release-packages/
+│   ├── makefile-organization/
+│   └── temporary-credential-agent/
 └── AGENTS.md                   # エージェント向けの動作指示・ルール定義
 ```
 
