@@ -7,4 +7,4 @@ node_modules/
 .claude/sdd-cache/
 .omo
 .justice
-temporary-*
+/temporary-*
