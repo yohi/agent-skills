@@ -70,9 +70,12 @@ check_verification_plan() {
 }
 JSON
   cat > "$repo/Makefile" <<'MAKEFILE'
-VERSION := 1
-OPTION ?= default
+export VERSION := 1
+override OPTION := default
+%.o: %.c
 test lint:
+	@true
+test:
 	@true
 MAKEFILE
 
@@ -88,9 +91,56 @@ assert plan["makefile_targets"] == ["test", "lint"]
 '
 }
 
+check_dry_run_flags() {
+  local repo="$TEMP_DIR/dry-run-repo"
+  mkdir -p "$repo/.agent-setup"
+
+  cat > "$repo/.agent-setup/analyze.json" <<'JSON'
+{
+  "install_command": "make deploy",
+  "build_command": "terraform apply",
+  "test_command": "kubectl apply -f config.yaml",
+  "lint_command": "npm publish",
+  "env_template": false
+}
+JSON
+
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+plan = json.load(sys.stdin)
+commands = {entry["command"]: entry for entry in plan["commands"]}
+assert commands["make deploy"]["dry_run_flag"] == "--dry-run"
+assert commands["terraform apply"]["dry_run_flag"] == "plan"
+assert commands["kubectl apply -f config.yaml"]["dry_run_flag"] == "--dry-run=client"
+assert commands["npm publish"]["dry_run_flag"] == "--dry-run"
+'
+}
+
+check_invalid_repo_path() {
+  local invalid_path="$TEMP_DIR/missing-repo"
+  local stderr_file="$TEMP_DIR/invalid-repo.stderr"
+
+  if bash "$SCRIPT_DIR/analyze-repo.sh" "$invalid_path" >/dev/null 2>"$stderr_file"; then
+    return 1
+  fi
+
+  python3 - "$stderr_file" <<'PY'
+from pathlib import Path
+import sys
+
+stderr = Path(sys.argv[1]).read_text()
+assert '{"error":"cannot enter repository path"}' in stderr
+PY
+}
+
 run_test "eval manifest parses" check_eval_manifest
 run_test "analysis detects nested scripts and lockfiles" check_analysis
 run_test "verification preserves review risk and finds root Makefile" check_verification_plan
+run_test "verification reports dry-run flags" check_dry_run_flags
+run_test "analysis reports invalid repository paths" check_invalid_repo_path
 
 if (( failures > 0 )); then
   exit 1

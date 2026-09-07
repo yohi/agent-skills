@@ -14,7 +14,10 @@
 set -euo pipefail
 
 REPO_PATH="${1:-$PWD}"
-REPO_PATH="$(cd "$REPO_PATH" && pwd)"
+if ! REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)"; then
+  echo '{"error":"cannot enter repository path"}' >&2
+  exit 1
+fi
 
 cd "$REPO_PATH" || {
   echo '{"error":"cannot enter repository path"}' >&2

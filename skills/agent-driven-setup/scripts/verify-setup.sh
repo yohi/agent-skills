@@ -57,11 +57,16 @@ def classify(cmd: str) -> dict:
         "gcloud", "az ", "kubectl", "docker push", "fly deploy",
         "npm publish", "pip upload", "twine upload",
     )
-    # Commands that commonly support a dry-run mode.
-    dry_run_candidates = (
-        "make", "terraform", "aws", "gcloud", "az", "kubectl",
-        "npm publish", "twine upload",
-    )
+    # Only include commands with a generic dry-run invocation. AWS, gcloud, and
+    # az expose dry-run-like behavior on selected subcommands, so guessing a
+    # flag for them would be less safe than asking the user.
+    dry_run_flags = {
+        "make": "--dry-run",
+        "terraform": "plan",
+        "kubectl": "--dry-run=client",
+        "npm publish": "--dry-run",
+        "twine upload": "--dry-run",
+    }
 
     category = "review"
     for prefix in safe_prefixes:
@@ -75,11 +80,11 @@ def classify(cmd: str) -> dict:
 
     dry_run_flag = None
     if category == "review":
-        for candidate in dry_run_candidates:
+        for candidate, flag in sorted(
+            dry_run_flags.items(), key=lambda item: len(item[0]), reverse=True
+        ):
             if lower.startswith(candidate):
-                dry_run_flag = "--dry-run" if candidate in ("npm publish", "twine upload") else None
-                if candidate in ("terraform",):
-                    dry_run_flag = "-plan"
+                dry_run_flag = flag
                 break
 
     return {
@@ -111,12 +116,23 @@ for key, label in (("install_command", "install"), ("build_command", "build"),
 makefile_path = analyze_path.parent.parent / "Makefile"
 if makefile_path.exists():
     targets = []
+    seen_targets = set()
+    assignment_pattern = re.compile(
+        r"^(?:(?:export|override)\s+)*"
+        r"[A-Za-z_][A-Za-z0-9_.-]*\s*(?::=|\?=|\+=|!=|=)"
+    )
     for line in makefile_path.read_text().splitlines():
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_.-]*\s*(?::=|\?=|\+=|!=)", line):
+        if assignment_pattern.match(line):
             continue
         if ":" in line and not line.startswith(("\t", "#", " ")):
             for target in line.split(":", 1)[0].split():
-                if target and not target.startswith("."):
+                if (
+                    target
+                    and not target.startswith(".")
+                    and "%" not in target
+                    and target not in seen_targets
+                ):
+                    seen_targets.add(target)
                     targets.append(target)
     if targets:
         plan["makefile_targets"] = targets
