@@ -1,0 +1,13 @@
+{
+  "eval_id": 1,
+  "eval_name": "mature-existing-setup",
+  "prompt": "Add an Agent-driven setup framework to /home/y_ohi/program/private/agent-skills/.agent-setup-fixtures/eval-a-node-mature so users can paste a short prompt into an AI coding agent to install and develop this project. Keep the existing manual install instructions, reuse existing setup assets, and verify the setup actually works.",
+  "assertions": [
+    "README contains a short Agent setup paste prompt",
+    "AGENTS.md exists and contains a setup protocol section",
+    "Generated files do not duplicate the existing npm install/test commands as the source of truth",
+    "npm test passes in the target repository",
+    "No generated file references yohi/agent-skills, agent-driven-setup meta-skill, or /mnt/skills/user paths",
+    "Original README manual install section is preserved"
+  ]
+}

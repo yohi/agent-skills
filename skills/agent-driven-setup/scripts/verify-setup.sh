@@ -1,0 +1,127 @@
+#!/bin/bash
+# verify-setup.sh — Build a safe, repository-defined verification plan.
+#
+# Reads the JSON produced by analyze-repo.sh and emits a verification plan
+# that classifies each candidate command as safe-to-run, dry-run-only, or
+# requires-user-review. The script does NOT run arbitrary repo commands on its
+# own; it only prepares the plan so an AI agent can decide what to execute.
+#
+# Usage:
+#   bash scripts/verify-setup.sh [repo-path]
+#
+# If <repo-path>/.agent-setup/analyze.json exists, it is used. Otherwise
+# analyze-repo.sh is run first.
+
+set -euo pipefail
+
+REPO_PATH="${1:-$PWD}"
+REPO_PATH="$(cd "$REPO_PATH" && pwd)"
+ANALYZE_JSON="$REPO_PATH/.agent-setup/analyze.json"
+
+mkdir -p "$REPO_PATH/.agent-setup"
+
+if [[ -f "$ANALYZE_JSON" ]]; then
+  echo "Using existing analyze.json" >&2
+else
+  echo "Running analyze-repo.sh first" >&2
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  bash "$SCRIPT_DIR/analyze-repo.sh" "$REPO_PATH" > "$ANALYZE_JSON"
+fi
+
+python3 - "$ANALYZE_JSON" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+analyze_path = Path(sys.argv[1])
+data = json.loads(analyze_path.read_text())
+
+def classify(cmd: str) -> dict:
+    """Classify a repo-defined command by likely side-effect risk."""
+    if not cmd:
+        return None
+    lower = cmd.lower()
+    # Commands that are usually local-only and idempotent.
+    safe_prefixes = (
+        "npm test", "yarn test", "pnpm test", "bun test",
+        "cargo test", "go test", "pytest", "python -m pytest",
+        "bundle exec rspec", "make test", "make check",
+        "npm run lint", "yarn lint", "pnpm lint", "make lint",
+        "cargo check", "go vet",
+    )
+    # Commands that may need review because they can mutate state.
+    review_keywords = (
+        "sudo", "deploy", "publish", "push", "release",
+        "provision", "apply", "destroy", "terraform", "aws ",
+        "gcloud", "az ", "kubectl", "docker push", "fly deploy",
+        "npm publish", "pip upload", "twine upload",
+    )
+    # Commands that commonly support a dry-run mode.
+    dry_run_candidates = (
+        "make", "terraform", "aws", "gcloud", "az", "kubectl",
+        "npm publish", "twine upload",
+    )
+
+    category = "safe"
+    for kw in review_keywords:
+        if kw in lower:
+            category = "review"
+            break
+    for prefix in safe_prefixes:
+        if lower.startswith(prefix):
+            category = "safe"
+            break
+
+    dry_run_flag = None
+    if category == "review":
+        for candidate in dry_run_candidates:
+            if lower.startswith(candidate):
+                dry_run_flag = "--dry-run" if candidate in ("npm publish", "twine upload") else None
+                if candidate in ("terraform",):
+                    dry_run_flag = "-plan"
+                break
+
+    return {
+        "command": cmd,
+        "category": category,
+        "dry_run_flag": dry_run_flag,
+        "note": (
+            "Likely local-only; can be executed directly."
+            if category == "safe" else
+            "May mutate external state; use dry-run if available, otherwise ask the user before running."
+        ),
+    }
+
+plan = {
+    "commands": [],
+    "notes": [],
+}
+
+for key, label in (("install_command", "install"), ("build_command", "build"),
+                   ("test_command", "test"), ("lint_command", "lint")):
+    cmd = data.get(key)
+    entry = classify(cmd)
+    if entry:
+        entry["phase"] = label
+        plan["commands"].append(entry)
+
+# If the repo has a Makefile, surface the available targets so the agent can
+# consider them without parsing the Makefile itself.
+makefile_path = analyze_path.parent / "Makefile"
+if makefile_path.exists():
+    targets = []
+    for line in makefile_path.read_text().splitlines():
+        if ":" in line and not line.startswith(("\t", "#", " ")):
+            target = line.split(":")[0].strip()
+            if target and not target.startswith("."):
+                targets.append(target)
+    if targets:
+        plan["makefile_targets"] = targets
+
+# Flag credential-sensitive environment templates.
+if data.get("env_template"):
+    plan["notes"].append("Repository has an env template; verify secrets are handled per the secret policy before running any integration test.")
+
+json.dump(plan, sys.stdout, indent=2, ensure_ascii=False)
+print()
+PY
