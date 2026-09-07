@@ -67,10 +67,11 @@ def classify(cmd: str) -> dict:
         if kw in lower:
             category = "review"
             break
-    for prefix in safe_prefixes:
-        if lower.startswith(prefix):
-            category = "safe"
-            break
+    if category != "review":
+        for prefix in safe_prefixes:
+            if lower.startswith(prefix):
+                category = "safe"
+                break
 
     dry_run_flag = None
     if category == "review":
@@ -107,7 +108,7 @@ for key, label in (("install_command", "install"), ("build_command", "build"),
 
 # If the repo has a Makefile, surface the available targets so the agent can
 # consider them without parsing the Makefile itself.
-makefile_path = analyze_path.parent / "Makefile"
+makefile_path = analyze_path.parent.parent / "Makefile"
 if makefile_path.exists():
     targets = []
     for line in makefile_path.read_text().splitlines():

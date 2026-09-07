@@ -33,7 +33,23 @@ json_field() {
   local file="$1"
   local key="$2"
   if command -v python3 >/dev/null 2>&1 && file_exists "$file"; then
-    python3 -c "import json,sys; d=json.load(open('$file')); print(d.get('$key',''))" 2>/dev/null || true
+    python3 - "$file" "$key" 2>/dev/null <<'PY' || true
+import json
+import sys
+
+try:
+    with open(sys.argv[1]) as f:
+        value = json.load(f)
+    for part in sys.argv[2].split("."):
+        if not isinstance(value, dict):
+            value = ""
+            break
+        value = value.get(part, "")
+except (OSError, json.JSONDecodeError):
+    value = ""
+
+print(value if isinstance(value, str) else "")
+PY
   fi
 }
 
@@ -63,58 +79,58 @@ if file_exists "package.json"; then
   [[ -z "$test_command" ]] && test_command="npm test"
   build_command="$(json_field package.json scripts.build)"
   lint_command="$(json_field package.json scripts.lint)"
-  file_exists "package-lock.json" && lockfiles+="package-lock.json\n"
+  file_exists "package-lock.json" && lockfiles+="package-lock.json"$'\n'
   if file_exists "yarn.lock"; then
     package_manager="yarn"
     install_command="yarn install"
     test_command="yarn test"
-    lockfiles+="yarn.lock\n"
+    lockfiles+="yarn.lock"$'\n'
   fi
   if file_exists "pnpm-lock.yaml"; then
     package_manager="pnpm"
     install_command="pnpm install"
     test_command="pnpm test"
-    lockfiles+="pnpm-lock.yaml\n"
+    lockfiles+="pnpm-lock.yaml"$'\n'
   fi
   if file_exists "bun.lockb"; then
     package_manager="bun"
     install_command="bun install"
     test_command="bun test"
-    lockfiles+="bun.lockb\n"
+    lockfiles+="bun.lockb"$'\n'
   fi
 elif file_exists "pyproject.toml"; then
   package_manager="pip"
   install_command="pip install -e ."
   test_command="python -m pytest"
   build_command="python -m build"
-  lockfiles+="pyproject.toml\n"
+  lockfiles+="pyproject.toml"$'\n'
   if file_exists "poetry.lock"; then
     package_manager="poetry"
     install_command="poetry install"
-    lockfiles+="poetry.lock\n"
+    lockfiles+="poetry.lock"$'\n'
   elif file_exists "Pipfile"; then
     package_manager="pipenv"
     install_command="pipenv install"
-    lockfiles+="Pipfile.lock\n"
+    lockfiles+="Pipfile.lock"$'\n'
   fi
 elif file_exists "Cargo.toml"; then
   package_manager="cargo"
   install_command="cargo build"
   test_command="cargo test"
   build_command="cargo build --release"
-  lockfiles+="Cargo.lock\n"
+  lockfiles+="Cargo.lock"$'\n'
 elif file_exists "go.mod"; then
   package_manager="go"
   install_command="go mod download"
   test_command="go test ./..."
   build_command="go build ./..."
-  lockfiles+="go.sum\n"
+  lockfiles+="go.sum"$'\n'
 elif file_exists "Gemfile"; then
   package_manager="bundler"
   install_command="bundle install"
   test_command="bundle exec rspec"
   build_command=""
-  lockfiles+="Gemfile.lock\n"
+  lockfiles+="Gemfile.lock"$'\n'
 fi
 
 # Allow explicit task-runner commands to override inferred test/build/lint.
