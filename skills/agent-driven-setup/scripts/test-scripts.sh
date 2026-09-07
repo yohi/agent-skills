@@ -277,6 +277,63 @@ assert plan["makefile_targets"] == ["check"]
 '
 }
 
+check_verification_reads_utf8_analysis_json() {
+  local repo="$TEMP_DIR/utf8-analysis-repo"
+  mkdir -p "$repo/.agent-setup"
+
+  python3 - "$repo/.agent-setup/analyze.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_bytes(
+    json.dumps(
+        {"test_command": "npm test", "readme": "\u65e5\u672c\u8a9e"},
+        ensure_ascii=False,
+    ).encode("utf-8")
+)
+PY
+
+  LC_ALL=C PYTHONUTF8=0 bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+plan = json.load(sys.stdin)
+assert plan["commands"][0]["command"] == "npm test"
+'
+}
+
+check_analysis_detects_multi_target_test_rule() {
+  local repo="$TEMP_DIR/multi-target-test-repo"
+  mkdir -p "$repo"
+  printf '%s\n' 'test lint:' > "$repo/Makefile"
+
+  bash "$SCRIPT_DIR/analyze-repo.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+assert data["test_command"] == "make test"
+'
+}
+
+check_analysis_detects_test_target_with_space_before_colon() {
+  local repo="$TEMP_DIR/spaced-test-target-repo"
+  mkdir -p "$repo"
+  printf '%s\n' 'test :' > "$repo/Makefile"
+
+  bash "$SCRIPT_DIR/analyze-repo.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+assert data["test_command"] == "make test"
+'
+}
+
 check_invalid_repo_path() {
   local invalid_path="$TEMP_DIR/missing-repo"
   local analyze_stderr_file="$TEMP_DIR/analyze-invalid-repo.stderr"
@@ -329,6 +386,9 @@ run_test "verification preserves review risk and finds root Makefile" check_veri
 run_test "verification reports dry-run flags" check_dry_run_flags
 run_test "verification respects command boundaries" check_verification_requires_command_boundaries
 run_test "verification handles non-UTF-8 Makefiles" check_verification_handles_non_utf8_makefile
+run_test "verification reads UTF-8 analysis JSON" check_verification_reads_utf8_analysis_json
+run_test "analysis detects multi-target test rules" check_analysis_detects_multi_target_test_rule
+run_test "analysis detects test targets with spaced colons" check_analysis_detects_test_target_with_space_before_colon
 run_test "analysis reports invalid repository paths" check_invalid_repo_path
 run_test "verification retries after analysis failure without stale cache" check_analysis_failure_does_not_poison_cache
 

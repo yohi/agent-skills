@@ -136,9 +136,9 @@ fi
 
 # Allow explicit task-runner commands to override inferred test/build/lint.
 if file_exists "Makefile"; then
-  [[ -z "$test_command" ]] && grep -qE "^[[:space:]]*test:" "Makefile" 2>/dev/null && test_command="make test"
-  [[ -z "$build_command" ]] && grep -qE "^[[:space:]]*build:" "Makefile" 2>/dev/null && build_command="make build"
-  [[ -z "$lint_command" ]] && grep -qE "^[[:space:]]*lint:" "Makefile" 2>/dev/null && lint_command="make lint"
+  [[ -z "$test_command" ]] && grep -qE "^[[:space:]]*test([[:space:]]|:)" "Makefile" 2>/dev/null && test_command="make test"
+  [[ -z "$build_command" ]] && grep -qE "^[[:space:]]*build([[:space:]]|:)" "Makefile" 2>/dev/null && build_command="make build"
+  [[ -z "$lint_command" ]] && grep -qE "^[[:space:]]*lint([[:space:]]|:)" "Makefile" 2>/dev/null && lint_command="make lint"
 fi
 
 # ── CI / container / environment templates ───────────────────────────────────

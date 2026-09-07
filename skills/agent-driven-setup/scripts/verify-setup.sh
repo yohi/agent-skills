@@ -46,7 +46,7 @@ import sys
 from pathlib import Path
 
 analyze_path = Path(sys.argv[1])
-data = json.loads(analyze_path.read_text())
+data = json.loads(analyze_path.read_text(encoding="utf-8"))
 
 def classify(cmd: str) -> dict:
     """Classify a repo-defined command by likely side-effect risk."""
