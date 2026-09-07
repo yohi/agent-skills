@@ -80,6 +80,77 @@ assert data["test_command"] == "npm test"
 '
 }
 
+check_analysis_reads_utf8_package_json() {
+  local repo="$TEMP_DIR/utf8-package-repo"
+  mkdir -p "$repo"
+
+  python3 - "$repo/package.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_bytes(
+    json.dumps(
+        {
+            "description": "日本語",
+            "scripts": {
+                "build": "npm run compile",
+                "lint": "npm run check",
+            },
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+)
+PY
+
+  LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 \
+    bash "$SCRIPT_DIR/analyze-repo.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+assert data["build_command"] == "npm run compile"
+assert data["lint_command"] == "npm run check"
+'
+}
+
+check_analysis_ignores_makefile_variable_assignments() {
+  local repo="$TEMP_DIR/makefile-variable-repo"
+  mkdir -p "$repo"
+  cat > "$repo/Makefile" <<'MAKEFILE'
+test := true
+build = true
+lint ?= true
+MAKEFILE
+
+  bash "$SCRIPT_DIR/analyze-repo.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+assert data["test_command"] is None
+assert data["build_command"] is None
+assert data["lint_command"] is None
+'
+}
+
+check_analysis_detects_space_indented_test_target() {
+  local repo="$TEMP_DIR/space-indented-test-repo"
+  mkdir -p "$repo"
+  printf '%s\n' '  test :' > "$repo/Makefile"
+
+  bash "$SCRIPT_DIR/analyze-repo.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+assert data["test_command"] == "make test"
+'
+}
+
 check_analysis_requires_existing_lockfiles() {
   local root="$TEMP_DIR/lockfile-repos"
   local python_repo="$root/python"
@@ -380,6 +451,9 @@ PYTHON
 run_test "eval manifest parses" check_eval_manifest
 run_test "analysis detects nested scripts and lockfiles" check_analysis
 run_test "analysis uses package runner for npm tests" check_analysis_uses_package_runner_for_tests
+run_test "analysis reads UTF-8 package metadata" check_analysis_reads_utf8_package_json
+run_test "analysis ignores Makefile variable assignments" check_analysis_ignores_makefile_variable_assignments
+run_test "analysis detects space-indented test targets" check_analysis_detects_space_indented_test_target
 run_test "analysis reports only existing lockfiles" check_analysis_requires_existing_lockfiles
 run_test "analysis detects Git worktree metadata" check_analysis_detects_git_worktree_metadata
 run_test "verification preserves review risk and finds root Makefile" check_verification_plan

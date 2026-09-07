@@ -41,7 +41,7 @@ import json
 import sys
 
 try:
-    with open(sys.argv[1]) as f:
+    with open(sys.argv[1], encoding="utf-8") as f:
         value = json.load(f)
     for part in sys.argv[2].split("."):
         if not isinstance(value, dict):
@@ -136,9 +136,10 @@ fi
 
 # Allow explicit task-runner commands to override inferred test/build/lint.
 if file_exists "Makefile"; then
-  [[ -z "$test_command" ]] && grep -qE "^[[:space:]]*test([[:space:]]|:)" "Makefile" 2>/dev/null && test_command="make test"
-  [[ -z "$build_command" ]] && grep -qE "^[[:space:]]*build([[:space:]]|:)" "Makefile" 2>/dev/null && build_command="make build"
-  [[ -z "$lint_command" ]] && grep -qE "^[[:space:]]*lint([[:space:]]|:)" "Makefile" 2>/dev/null && lint_command="make lint"
+  # Match target declarations, not variable assignments or recipe commands.
+  [[ -z "$test_command" ]] && grep -qE "^ *test([[:space:]][^:=]*)?[[:space:]]*::?([^=]|$)" "Makefile" 2>/dev/null && test_command="make test"
+  [[ -z "$build_command" ]] && grep -qE "^ *build([[:space:]][^:=]*)?[[:space:]]*::?([^=]|$)" "Makefile" 2>/dev/null && build_command="make build"
+  [[ -z "$lint_command" ]] && grep -qE "^ *lint([[:space:]][^:=]*)?[[:space:]]*::?([^=]|$)" "Makefile" 2>/dev/null && lint_command="make lint"
 fi
 
 # ── CI / container / environment templates ───────────────────────────────────
