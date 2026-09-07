@@ -71,17 +71,21 @@ def classify(cmd: str) -> dict:
     # Only include commands with a generic dry-run invocation. AWS, gcloud, and
     # az expose dry-run-like behavior on selected subcommands, so guessing a
     # flag for them would be less safe than asking the user.
-    dry_run_flags = {
-        "make": "--dry-run",
-        "terraform": "plan",
-        "kubectl": "--dry-run=client",
-        "npm publish": "--dry-run",
-        "twine upload": "--dry-run",
+    dry_run_actions = {
+        "make": ("flag", "--dry-run"),
+        "terraform": ("command", "terraform plan"),
+        "kubectl": ("flag", "--dry-run=client"),
+        "npm publish": ("flag", "--dry-run"),
+        "twine upload": ("flag", "--dry-run"),
     }
 
     category = "review"
+
+    def starts_with_command(command: str, candidate: str) -> bool:
+        return re.match(rf"^{re.escape(candidate)}(?:\s|$)", command) is not None
+
     for prefix in safe_prefixes:
-        if lower.startswith(prefix):
+        if starts_with_command(lower, prefix):
             category = "safe"
             break
     for kw in review_keywords:
@@ -90,15 +94,19 @@ def classify(cmd: str) -> dict:
             break
 
     dry_run_flag = None
+    dry_run_command = None
     if category == "review":
-        for candidate, flag in sorted(
-            dry_run_flags.items(), key=lambda item: len(item[0]), reverse=True
+        for candidate, (action_type, action) in sorted(
+            dry_run_actions.items(), key=lambda item: len(item[0]), reverse=True
         ):
-            if lower.startswith(candidate):
-                dry_run_flag = flag
+            if starts_with_command(lower, candidate):
+                if action_type == "flag":
+                    dry_run_flag = action
+                else:
+                    dry_run_command = action
                 break
 
-    return {
+    result = {
         "command": cmd,
         "category": category,
         "dry_run_flag": dry_run_flag,
@@ -108,6 +116,9 @@ def classify(cmd: str) -> dict:
             "May mutate external state; use dry-run if available, otherwise ask the user before running."
         ),
     }
+    if dry_run_command:
+        result["dry_run_command"] = dry_run_command
+    return result
 
 plan = {
     "commands": [],
@@ -132,7 +143,7 @@ if makefile_path.exists():
         r"^(?:(?:export|override)\s+)*"
         r"[A-Za-z_][A-Za-z0-9_.-]*\s*(?::=|\?=|\+=|!=|=)"
     )
-    for line in makefile_path.read_text().splitlines():
+    for line in makefile_path.read_text(encoding="utf-8", errors="replace").splitlines():
         if assignment_pattern.match(line):
             continue
         if ":" in line and not line.startswith(("\t", "#", " ")):

@@ -58,6 +58,111 @@ assert data["install_docs"] == ["docs/install.md", "INSTALL.md"]
 '
 }
 
+check_analysis_uses_package_runner_for_tests() {
+  local repo="$TEMP_DIR/npm-script-repo"
+  mkdir -p "$repo"
+
+  cat > "$repo/package.json" <<'JSON'
+{
+  "scripts": {
+    "test": "jest"
+  }
+}
+JSON
+
+  bash "$SCRIPT_DIR/analyze-repo.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+assert data["test_command"] == "npm test"
+'
+}
+
+check_analysis_requires_existing_lockfiles() {
+  local root="$TEMP_DIR/lockfile-repos"
+  local python_repo="$root/python"
+  local pipenv_repo="$root/pipenv"
+  local cargo_repo="$root/cargo"
+  local go_repo="$root/go"
+  local ruby_repo="$root/ruby"
+  local pipenv_present_repo="$root/pipenv-present"
+  local cargo_present_repo="$root/cargo-present"
+  local go_present_repo="$root/go-present"
+  local ruby_present_repo="$root/ruby-present"
+
+  mkdir -p "$python_repo" "$pipenv_repo" "$cargo_repo" "$go_repo" \
+    "$ruby_repo" "$pipenv_present_repo" "$cargo_present_repo" \
+    "$go_present_repo" "$ruby_present_repo"
+  touch "$python_repo/pyproject.toml"
+  touch "$pipenv_repo/pyproject.toml" "$pipenv_repo/Pipfile"
+  touch "$cargo_repo/Cargo.toml"
+  touch "$go_repo/go.mod"
+  touch "$ruby_repo/Gemfile"
+  touch "$pipenv_present_repo/pyproject.toml" "$pipenv_present_repo/Pipfile" \
+    "$pipenv_present_repo/Pipfile.lock"
+  touch "$cargo_present_repo/Cargo.toml" "$cargo_present_repo/Cargo.lock"
+  touch "$go_present_repo/go.mod" "$go_present_repo/go.sum"
+  touch "$ruby_present_repo/Gemfile" "$ruby_present_repo/Gemfile.lock"
+
+  for repo in "$python_repo" "$pipenv_repo" "$cargo_repo" "$go_repo" \
+    "$ruby_repo" "$pipenv_present_repo" "$cargo_present_repo" \
+    "$go_present_repo" "$ruby_present_repo"; do
+    bash "$SCRIPT_DIR/analyze-repo.sh" "$repo" 2>/dev/null > "$repo/analyze.json"
+  done
+
+  python3 - "$python_repo/analyze.json" "$pipenv_repo/analyze.json" \
+    "$cargo_repo/analyze.json" "$go_repo/analyze.json" \
+    "$ruby_repo/analyze.json" "$pipenv_present_repo/analyze.json" \
+    "$cargo_present_repo/analyze.json" "$go_present_repo/analyze.json" \
+    "$ruby_present_repo/analyze.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+data = [json.loads(Path(path).read_text()) for path in sys.argv[1:]]
+assert data[0]["lockfiles"] == []
+assert data[1]["lockfiles"] == []
+assert data[2]["lockfiles"] == []
+assert data[3]["lockfiles"] == []
+assert data[4]["lockfiles"] == []
+assert data[5]["lockfiles"] == ["Pipfile.lock"]
+assert data[6]["lockfiles"] == ["Cargo.lock"]
+assert data[7]["lockfiles"] == ["go.sum"]
+assert data[8]["lockfiles"] == ["Gemfile.lock"]
+PY
+}
+
+check_analysis_detects_git_worktree_metadata() {
+  local repo="$TEMP_DIR/git-repo"
+  local worktree="$TEMP_DIR/git-worktree"
+
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email test@example.invalid
+  git -C "$repo" config user.name "Agent Setup Test"
+  touch "$repo/README.md"
+  git -C "$repo" add README.md
+  git -C "$repo" commit -qm initial
+  git -C "$repo" branch -M main
+  git -C "$repo" remote add origin https://example.invalid/agent-driven-setup.git
+  git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+  git -C "$repo" worktree add -q -b review-worktree "$worktree" main
+
+  [[ -f "$worktree/.git" ]] || return 1
+
+  bash "$SCRIPT_DIR/analyze-repo.sh" "$worktree" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+assert data["git_remote"] == "https://example.invalid/agent-driven-setup.git"
+assert data["default_branch"] == "main"
+'
+}
+
 check_verification_plan() {
   local repo="$TEMP_DIR/verification-repo"
   mkdir -p "$repo/.agent-setup"
@@ -113,9 +218,62 @@ import sys
 plan = json.load(sys.stdin)
 commands = {entry["command"]: entry for entry in plan["commands"]}
 assert commands["make deploy"]["dry_run_flag"] == "--dry-run"
-assert commands["terraform apply"]["dry_run_flag"] == "plan"
+assert commands["terraform apply"]["dry_run_flag"] is None
+assert commands["terraform apply"]["dry_run_command"] == "terraform plan"
 assert commands["kubectl apply -f config.yaml"]["dry_run_flag"] == "--dry-run=client"
 assert commands["npm publish"]["dry_run_flag"] == "--dry-run"
+'
+}
+
+check_verification_requires_command_boundaries() {
+  local repo="$TEMP_DIR/command-boundary-repo"
+  mkdir -p "$repo/.agent-setup"
+
+  cat > "$repo/.agent-setup/analyze.json" <<'JSON'
+{
+  "install_command": "makemigrations",
+  "build_command": "npm testevil",
+  "test_command": "make test",
+  "lint_command": "npm publish"
+}
+JSON
+
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+plan = json.load(sys.stdin)
+commands = {entry["command"]: entry for entry in plan["commands"]}
+assert commands["makemigrations"]["dry_run_flag"] is None
+assert commands["npm testevil"]["category"] == "review"
+assert commands["make test"]["category"] == "safe"
+'
+}
+
+check_verification_handles_non_utf8_makefile() {
+  local repo="$TEMP_DIR/non-utf8-makefile-repo"
+  mkdir -p "$repo/.agent-setup"
+
+  cat > "$repo/.agent-setup/analyze.json" <<'JSON'
+{
+  "env_template": false
+}
+JSON
+  python3 - "$repo/Makefile" <<'PY'
+from pathlib import Path
+import sys
+
+Path(sys.argv[1]).write_bytes(b"# caf\xe9\ncheck:\n\t@true\n")
+PY
+
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+plan = json.load(sys.stdin)
+assert plan["makefile_targets"] == ["check"]
 '
 }
 
@@ -158,14 +316,19 @@ PYTHON
     return 1
   fi
 
-  [[ ! -e "$repo/.agent-setup/analyze.json" ]]
+  [[ ! -e "$repo/.agent-setup/analyze.json" ]] || return 1
   bash "$SCRIPT_DIR/verify-setup.sh" "$repo" >/dev/null 2>"$TEMP_DIR/retry-analysis.stderr"
 }
 
 run_test "eval manifest parses" check_eval_manifest
 run_test "analysis detects nested scripts and lockfiles" check_analysis
+run_test "analysis uses package runner for npm tests" check_analysis_uses_package_runner_for_tests
+run_test "analysis reports only existing lockfiles" check_analysis_requires_existing_lockfiles
+run_test "analysis detects Git worktree metadata" check_analysis_detects_git_worktree_metadata
 run_test "verification preserves review risk and finds root Makefile" check_verification_plan
 run_test "verification reports dry-run flags" check_dry_run_flags
+run_test "verification respects command boundaries" check_verification_requires_command_boundaries
+run_test "verification handles non-UTF-8 Makefiles" check_verification_handles_non_utf8_makefile
 run_test "analysis reports invalid repository paths" check_invalid_repo_path
 run_test "verification retries after analysis failure without stale cache" check_analysis_failure_does_not_poison_cache
 

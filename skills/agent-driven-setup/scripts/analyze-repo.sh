@@ -78,8 +78,7 @@ lockfiles=""
 if file_exists "package.json"; then
   package_manager="npm"
   install_command="npm install"
-  test_command="$(json_field package.json scripts.test)"
-  [[ -z "$test_command" ]] && test_command="npm test"
+  test_command="npm test"
   build_command="$(json_field package.json scripts.build)"
   lint_command="$(json_field package.json scripts.lint)"
   file_exists "package-lock.json" && lockfiles+="package-lock.json"$'\n'
@@ -106,7 +105,6 @@ elif file_exists "pyproject.toml"; then
   install_command="pip install -e ."
   test_command="python -m pytest"
   build_command="python -m build"
-  lockfiles+="pyproject.toml"$'\n'
   if file_exists "poetry.lock"; then
     package_manager="poetry"
     install_command="poetry install"
@@ -114,26 +112,26 @@ elif file_exists "pyproject.toml"; then
   elif file_exists "Pipfile"; then
     package_manager="pipenv"
     install_command="pipenv install"
-    lockfiles+="Pipfile.lock"$'\n'
+    file_exists "Pipfile.lock" && lockfiles+="Pipfile.lock"$'\n'
   fi
 elif file_exists "Cargo.toml"; then
   package_manager="cargo"
   install_command="cargo build"
   test_command="cargo test"
   build_command="cargo build --release"
-  lockfiles+="Cargo.lock"$'\n'
+  file_exists "Cargo.lock" && lockfiles+="Cargo.lock"$'\n'
 elif file_exists "go.mod"; then
   package_manager="go"
   install_command="go mod download"
   test_command="go test ./..."
   build_command="go build ./..."
-  lockfiles+="go.sum"$'\n'
+  file_exists "go.sum" && lockfiles+="go.sum"$'\n'
 elif file_exists "Gemfile"; then
   package_manager="bundler"
   install_command="bundle install"
   test_command="bundle exec rspec"
   build_command=""
-  lockfiles+="Gemfile.lock"$'\n'
+  file_exists "Gemfile.lock" && lockfiles+="Gemfile.lock"$'\n'
 fi
 
 # Allow explicit task-runner commands to override inferred test/build/lint.
@@ -182,7 +180,7 @@ done
 
 git_remote=""
 default_branch=""
-if dir_exists ".git"; then
+if git rev-parse --git-dir >/dev/null 2>&1; then
   git_remote="$(git remote get-url origin 2>/dev/null || true)"
   default_branch="$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's#^refs/remotes/origin/##' || true)"
   [[ -z "$default_branch" ]] && default_branch="$(git config init.defaultBranch 2>/dev/null || true)"
