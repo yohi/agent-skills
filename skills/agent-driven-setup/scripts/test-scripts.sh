@@ -41,6 +41,8 @@ check_analysis() {
 }
 JSON
   touch "$repo/package-lock.json" "$repo/yarn.lock"
+  mkdir -p "$repo/docs"
+  touch "$repo/docs/install.md" "$repo/INSTALL.md"
 
   bash "$SCRIPT_DIR/analyze-repo.sh" "$repo" 2>/dev/null |
     python3 -c '
@@ -52,6 +54,7 @@ assert data["test_command"] == "yarn test"
 assert data["build_command"] == "node build.js"
 assert data["lint_command"] == "node lint.js"
 assert data["lockfiles"] == ["package-lock.json", "yarn.lock"]
+assert data["install_docs"] == ["docs/install.md", "INSTALL.md"]
 '
 }
 
@@ -61,14 +64,15 @@ check_verification_plan() {
 
   cat > "$repo/.agent-setup/analyze.json" <<'JSON'
 {
-  "test_command": "npm test && npm publish",
+  "test_command": "npm test",
+  "build_command": "unknown-command --check",
   "env_template": false
 }
 JSON
   cat > "$repo/Makefile" <<'MAKEFILE'
-test:
-	@true
-lint:
+VERSION := 1
+OPTION ?= default
+test lint:
 	@true
 MAKEFILE
 
@@ -79,6 +83,7 @@ import sys
 
 plan = json.load(sys.stdin)
 assert plan["commands"][0]["category"] == "review"
+assert plan["commands"][1]["category"] == "safe"
 assert plan["makefile_targets"] == ["test", "lint"]
 '
 }

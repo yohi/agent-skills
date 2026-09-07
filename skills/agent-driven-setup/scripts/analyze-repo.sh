@@ -171,7 +171,7 @@ done
 install_docs=""
 for candidate in "docs/install.md" "docs/installation.md" "docs/setup.md" "docs/getting-started.md" "INSTALL.md"; do
   if file_exists "$candidate"; then
-    install_docs+="$candidate\n"
+    install_docs+="$candidate"$'\n'
   fi
 done
 

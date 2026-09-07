@@ -30,6 +30,7 @@ fi
 
 python3 - "$ANALYZE_JSON" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -62,16 +63,15 @@ def classify(cmd: str) -> dict:
         "npm publish", "twine upload",
     )
 
-    category = "safe"
+    category = "review"
+    for prefix in safe_prefixes:
+        if lower.startswith(prefix):
+            category = "safe"
+            break
     for kw in review_keywords:
         if kw in lower:
             category = "review"
             break
-    if category != "review":
-        for prefix in safe_prefixes:
-            if lower.startswith(prefix):
-                category = "safe"
-                break
 
     dry_run_flag = None
     if category == "review":
@@ -112,10 +112,12 @@ makefile_path = analyze_path.parent.parent / "Makefile"
 if makefile_path.exists():
     targets = []
     for line in makefile_path.read_text().splitlines():
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_.-]*\s*(?::=|\?=|\+=|!=)", line):
+            continue
         if ":" in line and not line.startswith(("\t", "#", " ")):
-            target = line.split(":")[0].strip()
-            if target and not target.startswith("."):
-                targets.append(target)
+            for target in line.split(":", 1)[0].split():
+                if target and not target.startswith("."):
+                    targets.append(target)
     if targets:
         plan["makefile_targets"] = targets
 
