@@ -82,6 +82,7 @@ from the README alone.
    common facts automatically.
 2. Use this checklist to fill gaps that `analyze-repo.sh` cannot detect (for
    example, secret requirements, unsupported platforms, or hidden scripts).
-3. Cross-check at least two independent sources before deciding the canonical
-   setup source. CI, lockfiles, and task runners are usually more reliable than
-   prose docs.
+3. When another independent source exists, cross-check it before deciding the
+   canonical setup source. If no second source exists, use the single available
+   source and record its path, scope, and constraints before selecting it. CI,
+   lockfiles, and task runners are usually more reliable than prose docs.

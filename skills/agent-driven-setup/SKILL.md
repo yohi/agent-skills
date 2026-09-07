@@ -128,7 +128,8 @@ The protocol must:
 - List decisions the Agent may make autonomously and decisions that require
   structured Ask.
 - State the secret policy (see
-  - Include verification steps (see
+  [references/secret-handling-patterns.md](references/secret-handling-patterns.md)).
+- Include verification steps (see
   [references/verification-patterns.md](references/verification-patterns.md)).
 - Follow the template in
   [references/agent-protocol-template.md](references/agent-protocol-template.md),
@@ -152,7 +153,8 @@ bash /mnt/skills/user/agent-driven-setup/scripts/verify-setup.sh [repo-path]
 ```
 
 This emits a verification plan that classifies each repository-defined command
-as `safe`, `review`, or `dry-run-only`. Then:
+as `safe` or `review`. Dry-run guidance is represented by `dry_run_flag` and
+`dry_run_command` when available. Then:
 
 - Run `safe` commands directly (e.g., `npm test`, `cargo test`).
 - Use dry-run options for `review` commands when available.
@@ -200,10 +202,13 @@ capability when available. Required gates include:
 If structured Ask is unavailable, fall back to plain chat only for required
 questions and record the fallback.
 
-Ordinary repo-local setup steps such as dependency installation, build, test,
-and lint do not require Ask when the user has already delegated setup to the
-agent. Ask only where the user's intent, risk, or an existing conflict cannot
-be inferred from the repository.
+Ordinary repo-local setup steps such as build, test, and lint do not require Ask
+when the user has already delegated setup to the agent. Dependency installation
+follows the side-effect classification in
+[references/verification-patterns.md](references/verification-patterns.md),
+including its user-confirmation requirement for package installs. Ask only where
+the user's intent, risk, or an existing conflict cannot be inferred from the
+repository.
 
 ### Secret handling
 
@@ -228,7 +233,6 @@ Autonomously execute reversible repo-local operations such as:
 
 - repository inspection
 - repo-local file creation / modification
-- dependency installation
 - build / test / lint
 - non-destructive verification
 - local development setup

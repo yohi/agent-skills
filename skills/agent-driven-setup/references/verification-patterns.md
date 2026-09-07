@@ -33,7 +33,7 @@ only when existing verification does not cover setup.
 | Command type | Typical side effect | Recommended action |
 |---|---|---|
 | `npm test`, `cargo test`, `go test` | Local file writes only | Run directly |
-| `npm install`, `pip install` | Downloads dependencies, writes to `node_modules` / `.venv` | Run directly on the repo copy |
+| `npm install`, `pip install` | Downloads dependencies, writes to `node_modules` / `.venv` | Ask the user before running; prefer a dry-run when available |
 | `terraform apply`, `aws deploy` | Mutates external infrastructure | Ask before running; prefer dry-run |
 | Database migration scripts | Mutates database schema or data | Ask before running; prefer `--dry-run` or local fixture |
 

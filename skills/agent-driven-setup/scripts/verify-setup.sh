@@ -2,15 +2,15 @@
 # verify-setup.sh — Build a safe, repository-defined verification plan.
 #
 # Reads the JSON produced by analyze-repo.sh and emits a verification plan
-# that classifies each candidate command as safe-to-run, dry-run-only, or
-# requires-user-review. The script does NOT run arbitrary repo commands on its
-# own; it only prepares the plan so an AI agent can decide what to execute.
+# that classifies each candidate command as safe-to-run or requires-user-review.
+# The script does NOT run arbitrary repo commands on its own; it only prepares
+# the plan so an AI agent can decide what to execute.
 #
 # Usage:
 #   bash scripts/verify-setup.sh [repo-path]
 #
-# If <repo-path>/.agent-setup/analyze.json exists, it is used. Otherwise
-# analyze-repo.sh is run first.
+# A matching input fingerprint allows reuse of <repo-path>/.agent-setup/analyze.json.
+# Otherwise analyze-repo.sh is run first and the cache is replaced atomically.
 
 set -euo pipefail
 
@@ -20,18 +20,53 @@ if ! REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)"; then
   exit 1
 fi
 ANALYZE_JSON="$REPO_PATH/.agent-setup/analyze.json"
+ANALYZE_FINGERPRINT="$REPO_PATH/.agent-setup/analyze.inputs.sha256"
 
 mkdir -p "$REPO_PATH/.agent-setup"
 
+INPUT_FINGERPRINT="$({
+  python3 - "$REPO_PATH" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+digest = hashlib.sha256()
+for name in ("package.json", "Makefile"):
+    path = root / name
+    digest.update(name.encode())
+    if path.is_file():
+        digest.update(b"\0present\0")
+        digest.update(path.read_bytes())
+    else:
+        digest.update(b"\0missing\0")
+
+print(digest.hexdigest())
+PY
+})"
+
+cache_is_current=false
 if [[ -f "$ANALYZE_JSON" ]]; then
-  echo "Using existing analyze.json" >&2
+  if [[ -f "$ANALYZE_FINGERPRINT" ]]; then
+    cached_fingerprint="$(<"$ANALYZE_FINGERPRINT")"
+    [[ "$cached_fingerprint" == "$INPUT_FINGERPRINT" ]] && cache_is_current=true
+  elif [[ ! -f "$REPO_PATH/package.json" && ! -f "$REPO_PATH/Makefile" ]]; then
+    cache_is_current=true
+  fi
+fi
+
+if [[ "$cache_is_current" == true ]]; then
+  echo "Using current analyze.json" >&2
 else
   echo "Running analyze-repo.sh first" >&2
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   ANALYZE_TMP="$(mktemp "$REPO_PATH/.agent-setup/analyze.json.XXXXXX")"
-  trap 'rm -f -- "$ANALYZE_TMP"' EXIT
+  FINGERPRINT_TMP="$(mktemp "$REPO_PATH/.agent-setup/analyze.inputs.sha256.XXXXXX")"
+  trap 'rm -f -- "$ANALYZE_TMP" "$FINGERPRINT_TMP"' EXIT
   if bash "$SCRIPT_DIR/analyze-repo.sh" "$REPO_PATH" > "$ANALYZE_TMP"; then
+    printf '%s\n' "$INPUT_FINGERPRINT" > "$FINGERPRINT_TMP"
     mv "$ANALYZE_TMP" "$ANALYZE_JSON"
+    mv "$FINGERPRINT_TMP" "$ANALYZE_FINGERPRINT"
     trap - EXIT
   else
     status=$?
@@ -42,6 +77,7 @@ fi
 python3 - "$ANALYZE_JSON" <<'PY'
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -82,7 +118,14 @@ def classify(cmd: str) -> dict:
     category = "review"
 
     def starts_with_command(command: str, candidate: str) -> bool:
-        return re.match(rf"^{re.escape(candidate)}(?:\s|$)", command) is not None
+        if re.search(r"[;&|<>`$()\n\r]", command):
+            return False
+        try:
+            command_argv = shlex.split(command, posix=True)
+            candidate_argv = shlex.split(candidate, posix=True)
+        except ValueError:
+            return False
+        return command_argv[:len(candidate_argv)] == candidate_argv
 
     for prefix in safe_prefixes:
         if starts_with_command(lower, prefix):

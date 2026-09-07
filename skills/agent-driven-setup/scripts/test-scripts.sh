@@ -11,6 +11,29 @@ cleanup() {
 }
 trap cleanup EXIT
 
+write_analysis_fingerprint() {
+  local repo="$1"
+  python3 - "$repo" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+digest = hashlib.sha256()
+for name in ("package.json", "Makefile"):
+    path = root / name
+    digest.update(name.encode())
+    if path.is_file():
+        digest.update(b"\0present\0")
+        digest.update(path.read_bytes())
+    else:
+        digest.update(b"\0missing\0")
+
+output = root / ".agent-setup" / "analyze.inputs.sha256"
+output.write_text(digest.hexdigest() + "\n", encoding="ascii")
+PY
+}
+
 run_test() {
   local name="$1"
   shift
@@ -254,6 +277,7 @@ test lint:
 test:
 	@true
 MAKEFILE
+  write_analysis_fingerprint "$repo"
 
   bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
     python3 -c '
@@ -375,6 +399,65 @@ assert plan["commands"][0]["command"] == "npm test"
 '
 }
 
+check_verification_rejects_shell_syntax_in_safe_commands() {
+  local repo="$TEMP_DIR/shell-syntax-repo"
+  mkdir -p "$repo/.agent-setup"
+
+  cat > "$repo/.agent-setup/analyze.json" <<'JSON'
+{
+  "install_command": "npm test ; printf unsafe",
+  "build_command": "make check > build.log",
+  "test_command": "npm test && printf unsafe | cat > test.log",
+  "lint_command": "npm run lint $(printf unsafe)"
+}
+JSON
+
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+plan = json.load(sys.stdin)
+commands = {entry["command"]: entry for entry in plan["commands"]}
+assert all(entry["category"] == "review" for entry in commands.values())
+'
+}
+
+check_verification_reanalyzes_changed_inputs() {
+  local repo="$TEMP_DIR/changed-inputs-repo"
+  mkdir -p "$repo"
+
+  cat > "$repo/package.json" <<'JSON'
+{
+  "scripts": {
+    "lint": "npm run lint-a"
+  }
+}
+JSON
+  printf '%s\n' 'test:' > "$repo/Makefile"
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null >/dev/null
+
+  cat > "$repo/package.json" <<'JSON'
+{
+  "scripts": {
+    "lint": "npm run lint-b"
+  }
+}
+JSON
+  printf '%s\n' 'lint test:' > "$repo/Makefile"
+
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+plan = json.load(sys.stdin)
+commands = {entry["phase"]: entry["command"] for entry in plan["commands"]}
+assert commands["lint"] == "npm run lint-b"
+assert plan["makefile_targets"] == ["lint", "test"]
+'
+}
+
 check_analysis_detects_multi_target_test_rule() {
   local repo="$TEMP_DIR/multi-target-test-repo"
   mkdir -p "$repo"
@@ -387,6 +470,23 @@ import sys
 
 data = json.load(sys.stdin)
 assert data["test_command"] == "make test"
+'
+}
+
+check_analysis_detects_multi_target_rules_in_any_order() {
+  local repo="$TEMP_DIR/multi-target-order-repo"
+  mkdir -p "$repo"
+  printf '%s\n' 'lint test build:' > "$repo/Makefile"
+
+  bash "$SCRIPT_DIR/analyze-repo.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+assert data["test_command"] == "make test"
+assert data["build_command"] == "make build"
+assert data["lint_command"] == "make lint"
 '
 }
 
@@ -461,7 +561,10 @@ run_test "verification reports dry-run flags" check_dry_run_flags
 run_test "verification respects command boundaries" check_verification_requires_command_boundaries
 run_test "verification handles non-UTF-8 Makefiles" check_verification_handles_non_utf8_makefile
 run_test "verification reads UTF-8 analysis JSON" check_verification_reads_utf8_analysis_json
+run_test "verification rejects shell syntax in safe commands" check_verification_rejects_shell_syntax_in_safe_commands
+run_test "verification reanalyzes changed inputs" check_verification_reanalyzes_changed_inputs
 run_test "analysis detects multi-target test rules" check_analysis_detects_multi_target_test_rule
+run_test "analysis detects multi-target rules in any order" check_analysis_detects_multi_target_rules_in_any_order
 run_test "analysis detects test targets with spaced colons" check_analysis_detects_test_target_with_space_before_colon
 run_test "analysis reports invalid repository paths" check_invalid_repo_path
 run_test "verification retries after analysis failure without stale cache" check_analysis_failure_does_not_poison_cache

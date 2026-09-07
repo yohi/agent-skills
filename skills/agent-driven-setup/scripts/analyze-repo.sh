@@ -137,9 +137,35 @@ fi
 # Allow explicit task-runner commands to override inferred test/build/lint.
 if file_exists "Makefile"; then
   # Match target declarations, not variable assignments or recipe commands.
-  [[ -z "$test_command" ]] && grep -qE "^ *test([[:space:]][^:=]*)?[[:space:]]*::?([^=]|$)" "Makefile" 2>/dev/null && test_command="make test"
-  [[ -z "$build_command" ]] && grep -qE "^ *build([[:space:]][^:=]*)?[[:space:]]*::?([^=]|$)" "Makefile" 2>/dev/null && build_command="make build"
-  [[ -z "$lint_command" ]] && grep -qE "^ *lint([[:space:]][^:=]*)?[[:space:]]*::?([^=]|$)" "Makefile" 2>/dev/null && lint_command="make lint"
+  makefile_has_target() {
+    local wanted="$1"
+    local line target_list target
+    local -a targets
+
+    while IFS= read -r line; do
+      [[ "$line" =~ ^[[:space:]]*# ]] && continue
+      [[ "$line" =~ ^[[:space:]]*((export|override)[[:space:]]+)*[A-Za-z_][A-Za-z0-9_.-]*[[:space:]]*(\?=|\+=|:=|!=|=) ]] && continue
+      [[ "$line" == *:* ]] || continue
+
+      target_list="${line%%:*}"
+      read -r -a targets <<< "$target_list"
+      for target in "${targets[@]}"; do
+        [[ "$target" == "$wanted" ]] && return 0
+      done
+    done < "Makefile"
+
+    return 1
+  }
+
+  if [[ -z "$test_command" ]] && makefile_has_target "test"; then
+    test_command="make test"
+  fi
+  if [[ -z "$build_command" ]] && makefile_has_target "build"; then
+    build_command="make build"
+  fi
+  if [[ -z "$lint_command" ]] && makefile_has_target "lint"; then
+    lint_command="make lint"
+  fi
 fi
 
 # ── CI / container / environment templates ───────────────────────────────────
