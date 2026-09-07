@@ -121,19 +121,45 @@ assert commands["npm publish"]["dry_run_flag"] == "--dry-run"
 
 check_invalid_repo_path() {
   local invalid_path="$TEMP_DIR/missing-repo"
-  local stderr_file="$TEMP_DIR/invalid-repo.stderr"
+  local analyze_stderr_file="$TEMP_DIR/analyze-invalid-repo.stderr"
+  local verify_stderr_file="$TEMP_DIR/verify-invalid-repo.stderr"
 
-  if bash "$SCRIPT_DIR/analyze-repo.sh" "$invalid_path" >/dev/null 2>"$stderr_file"; then
+  if bash "$SCRIPT_DIR/analyze-repo.sh" "$invalid_path" >/dev/null 2>"$analyze_stderr_file"; then
     return 1
   fi
 
-  python3 - "$stderr_file" <<'PY'
+  if bash "$SCRIPT_DIR/verify-setup.sh" "$invalid_path" >/dev/null 2>"$verify_stderr_file"; then
+    return 1
+  fi
+
+  python3 - "$analyze_stderr_file" "$verify_stderr_file" <<'PY'
 from pathlib import Path
 import sys
 
-stderr = Path(sys.argv[1]).read_text()
-assert '{"error":"cannot enter repository path"}' in stderr
+for stderr_path in sys.argv[1:]:
+    stderr = Path(stderr_path).read_text()
+    assert '{"error":"cannot enter repository path"}' in stderr
 PY
+}
+
+check_analysis_failure_does_not_poison_cache() {
+  local repo="$TEMP_DIR/failed-analysis-repo"
+  local fake_bin="$TEMP_DIR/fake-bin"
+  local first_stderr_file="$TEMP_DIR/failed-analysis.stderr"
+
+  mkdir -p "$repo" "$fake_bin"
+  cat > "$fake_bin/python3" <<'PYTHON'
+#!/bin/sh
+exit 1
+PYTHON
+  chmod +x "$fake_bin/python3"
+
+  if PATH="$fake_bin:$PATH" bash "$SCRIPT_DIR/verify-setup.sh" "$repo" >/dev/null 2>"$first_stderr_file"; then
+    return 1
+  fi
+
+  [[ ! -e "$repo/.agent-setup/analyze.json" ]]
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" >/dev/null 2>"$TEMP_DIR/retry-analysis.stderr"
 }
 
 run_test "eval manifest parses" check_eval_manifest
@@ -141,6 +167,7 @@ run_test "analysis detects nested scripts and lockfiles" check_analysis
 run_test "verification preserves review risk and finds root Makefile" check_verification_plan
 run_test "verification reports dry-run flags" check_dry_run_flags
 run_test "analysis reports invalid repository paths" check_invalid_repo_path
+run_test "verification retries after analysis failure without stale cache" check_analysis_failure_does_not_poison_cache
 
 if (( failures > 0 )); then
   exit 1

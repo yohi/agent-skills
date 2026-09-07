@@ -15,7 +15,10 @@
 set -euo pipefail
 
 REPO_PATH="${1:-$PWD}"
-REPO_PATH="$(cd "$REPO_PATH" && pwd)"
+if ! REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)"; then
+  echo '{"error":"cannot enter repository path"}' >&2
+  exit 1
+fi
 ANALYZE_JSON="$REPO_PATH/.agent-setup/analyze.json"
 
 mkdir -p "$REPO_PATH/.agent-setup"
@@ -25,7 +28,15 @@ if [[ -f "$ANALYZE_JSON" ]]; then
 else
   echo "Running analyze-repo.sh first" >&2
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  bash "$SCRIPT_DIR/analyze-repo.sh" "$REPO_PATH" > "$ANALYZE_JSON"
+  ANALYZE_TMP="$(mktemp "$REPO_PATH/.agent-setup/analyze.json.XXXXXX")"
+  trap 'rm -f -- "$ANALYZE_TMP"' EXIT
+  if bash "$SCRIPT_DIR/analyze-repo.sh" "$REPO_PATH" > "$ANALYZE_TMP"; then
+    mv "$ANALYZE_TMP" "$ANALYZE_JSON"
+    trap - EXIT
+  else
+    status=$?
+    exit "$status"
+  fi
 fi
 
 python3 - "$ANALYZE_JSON" <<'PY'
