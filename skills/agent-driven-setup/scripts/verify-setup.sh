@@ -32,7 +32,24 @@ import sys
 
 root = Path(sys.argv[1])
 digest = hashlib.sha256()
-for name in ("package.json", "Makefile"):
+for name in (
+    "package.json",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lockb",
+    "pyproject.toml",
+    "poetry.lock",
+    "Pipfile",
+    "Pipfile.lock",
+    "Cargo.toml",
+    "Cargo.lock",
+    "go.mod",
+    "go.sum",
+    "Gemfile",
+    "Gemfile.lock",
+    "Makefile",
+):
     path = root / name
     digest.update(name.encode())
     if path.is_file():
@@ -50,8 +67,6 @@ if [[ -f "$ANALYZE_JSON" ]]; then
   if [[ -f "$ANALYZE_FINGERPRINT" ]]; then
     cached_fingerprint="$(<"$ANALYZE_FINGERPRINT")"
     [[ "$cached_fingerprint" == "$INPUT_FINGERPRINT" ]] && cache_is_current=true
-  elif [[ ! -f "$REPO_PATH/package.json" && ! -f "$REPO_PATH/Makefile" ]]; then
-    cache_is_current=true
   fi
 fi
 
@@ -189,7 +204,9 @@ if makefile_path.exists():
     for line in makefile_path.read_text(encoding="utf-8", errors="replace").splitlines():
         if assignment_pattern.match(line):
             continue
-        if ":" in line and not line.startswith(("\t", "#", " ")):
+        if line.lstrip().startswith("#"):
+            continue
+        if ":" in line and not line.startswith("\t"):
             for target in line.split(":", 1)[0].split():
                 if (
                     target

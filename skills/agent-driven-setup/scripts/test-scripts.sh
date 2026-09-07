@@ -20,7 +20,24 @@ import sys
 
 root = Path(sys.argv[1])
 digest = hashlib.sha256()
-for name in ("package.json", "Makefile"):
+for name in (
+    "package.json",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "bun.lockb",
+    "pyproject.toml",
+    "poetry.lock",
+    "Pipfile",
+    "Pipfile.lock",
+    "Cargo.toml",
+    "Cargo.lock",
+    "go.mod",
+    "go.sum",
+    "Gemfile",
+    "Gemfile.lock",
+    "Makefile",
+):
     path = root / name
     digest.update(name.encode())
     if path.is_file():
@@ -156,6 +173,21 @@ data = json.load(sys.stdin)
 assert data["test_command"] is None
 assert data["build_command"] is None
 assert data["lint_command"] is None
+'
+}
+
+check_analysis_ignores_recipe_lines_with_colons() {
+  local repo="$TEMP_DIR/makefile-recipe-repo"
+  mkdir -p "$repo"
+  printf '%s\n' 'all:' $'\techo test: generated' > "$repo/Makefile"
+
+  bash "$SCRIPT_DIR/analyze-repo.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+assert data["test_command"] is None
 '
 }
 
@@ -304,6 +336,7 @@ check_dry_run_flags() {
   "env_template": false
 }
 JSON
+  write_analysis_fingerprint "$repo"
 
   bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
     python3 -c '
@@ -332,6 +365,7 @@ check_verification_requires_command_boundaries() {
   "lint_command": "npm publish"
 }
 JSON
+  write_analysis_fingerprint "$repo"
 
   bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
     python3 -c '
@@ -388,6 +422,7 @@ Path(sys.argv[1]).write_bytes(
     ).encode("utf-8")
 )
 PY
+  write_analysis_fingerprint "$repo"
 
   LC_ALL=C PYTHONUTF8=0 bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
     python3 -c '
@@ -411,6 +446,7 @@ check_verification_rejects_shell_syntax_in_safe_commands() {
   "lint_command": "npm run lint $(printf unsafe)"
 }
 JSON
+  write_analysis_fingerprint "$repo"
 
   bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
     python3 -c '
@@ -458,6 +494,45 @@ assert plan["makefile_targets"] == ["lint", "test"]
 '
 }
 
+check_verification_reanalyzes_changed_non_node_inputs() {
+  local repo="$TEMP_DIR/changed-non-node-inputs-repo"
+  mkdir -p "$repo"
+  touch "$repo/pyproject.toml"
+
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null >/dev/null
+  touch "$repo/poetry.lock"
+
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+plan = json.load(sys.stdin)
+commands = {entry["phase"]: entry["command"] for entry in plan["commands"]}
+assert commands["install"] == "poetry install"
+'
+}
+
+check_verification_reanalyzes_without_fingerprint() {
+  local repo="$TEMP_DIR/missing-fingerprint-repo"
+  mkdir -p "$repo/.agent-setup"
+  touch "$repo/pyproject.toml"
+  cat > "$repo/.agent-setup/analyze.json" <<'JSON'
+{
+  "install_command": "stale-install"
+}
+JSON
+
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+plan = json.load(sys.stdin)
+assert plan["commands"][0]["command"] == "pip install -e ."
+'
+}
+
 check_analysis_detects_multi_target_test_rule() {
   local repo="$TEMP_DIR/multi-target-test-repo"
   mkdir -p "$repo"
@@ -502,6 +577,21 @@ import sys
 
 data = json.load(sys.stdin)
 assert data["test_command"] == "make test"
+'
+}
+
+check_verification_includes_space_indented_targets() {
+  local repo="$TEMP_DIR/space-indented-verification-repo"
+  mkdir -p "$repo"
+  printf '%s\n' '  test :' > "$repo/Makefile"
+
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+plan = json.load(sys.stdin)
+assert plan["makefile_targets"] == ["test"]
 '
 }
 
@@ -553,6 +643,7 @@ run_test "analysis detects nested scripts and lockfiles" check_analysis
 run_test "analysis uses package runner for npm tests" check_analysis_uses_package_runner_for_tests
 run_test "analysis reads UTF-8 package metadata" check_analysis_reads_utf8_package_json
 run_test "analysis ignores Makefile variable assignments" check_analysis_ignores_makefile_variable_assignments
+run_test "analysis ignores recipe lines with colons" check_analysis_ignores_recipe_lines_with_colons
 run_test "analysis detects space-indented test targets" check_analysis_detects_space_indented_test_target
 run_test "analysis reports only existing lockfiles" check_analysis_requires_existing_lockfiles
 run_test "analysis detects Git worktree metadata" check_analysis_detects_git_worktree_metadata
@@ -563,9 +654,12 @@ run_test "verification handles non-UTF-8 Makefiles" check_verification_handles_n
 run_test "verification reads UTF-8 analysis JSON" check_verification_reads_utf8_analysis_json
 run_test "verification rejects shell syntax in safe commands" check_verification_rejects_shell_syntax_in_safe_commands
 run_test "verification reanalyzes changed inputs" check_verification_reanalyzes_changed_inputs
+run_test "verification reanalyzes changed non-node inputs" check_verification_reanalyzes_changed_non_node_inputs
+run_test "verification reanalyzes without fingerprint" check_verification_reanalyzes_without_fingerprint
 run_test "analysis detects multi-target test rules" check_analysis_detects_multi_target_test_rule
 run_test "analysis detects multi-target rules in any order" check_analysis_detects_multi_target_rules_in_any_order
 run_test "analysis detects test targets with spaced colons" check_analysis_detects_test_target_with_space_before_colon
+run_test "verification includes space-indented targets" check_verification_includes_space_indented_targets
 run_test "analysis reports invalid repository paths" check_invalid_repo_path
 run_test "verification retries after analysis failure without stale cache" check_analysis_failure_does_not_poison_cache
 

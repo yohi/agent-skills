@@ -143,6 +143,7 @@ if file_exists "Makefile"; then
     local -a targets
 
     while IFS= read -r line; do
+      [[ "$line" == $'\t'* ]] && continue
       [[ "$line" =~ ^[[:space:]]*# ]] && continue
       [[ "$line" =~ ^[[:space:]]*((export|override)[[:space:]]+)*[A-Za-z_][A-Za-z0-9_.-]*[[:space:]]*(\?=|\+=|:=|!=|=) ]] && continue
       [[ "$line" == *:* ]] || continue
