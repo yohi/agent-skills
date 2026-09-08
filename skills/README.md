@@ -22,6 +22,7 @@ skills/
 
 | スキル名 | 役割 | 使う場面 | 補足 |
 |---|---|---|---|
+| `agent-driven-setup` | AI エージェント主導のセットアップ導入 | リポジトリのインストールや開発環境構築を AI エージェントへ委譲できるようにしたいとき | 既存のセットアップ資産を調査し、リポジトリごとに適した手順を設計 |
 | `doc-sync-verifier` | ドキュメント整合性の検証 | 仕様書・設計書・表の不一致を裏取りしたいとき | ソースコードではなく文書だけを根拠に判断 |
 | `git-master` | Git 操作の安全な実行 | コミット分割、履歴整理、履歴調査をしたいとき | Conventional Commits（日本語）に対応 |
 | `github-quality-setup` | GitHub 品質・セキュリティ基盤の構築 | CodeRabbit / Dependabot / CodeQL / Semgrep / SonarCloud / Codecov などを入れたいとき | 参照資料として `references/tool-configs.md` と `evals/evals.json` を含む |

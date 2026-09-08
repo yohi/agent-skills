@@ -12,6 +12,7 @@ AIコーディングエージェントに適用するための、自作のカス
 agent-skills/
 ├── skills/
 │   ├── README.md               # 自作スキルの追加・運用ガイド
+│   ├── agent-driven-setup/
 │   ├── doc-sync-verifier/
 │   ├── git-master/
 │   ├── github-quality-setup/

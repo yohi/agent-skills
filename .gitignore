@@ -8,3 +8,6 @@ node_modules/
 .omo
 .justice
 /temporary-*
+/.agent-setup/
+/.agent-setup-fixtures/
+/.agent-setup-workspace/
