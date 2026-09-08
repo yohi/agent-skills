@@ -36,6 +36,8 @@ for name in (
     "go.sum",
     "Gemfile",
     "Gemfile.lock",
+    ".env.example",
+    ".env.sample",
     "Makefile",
 ):
     path = root / name
@@ -471,7 +473,7 @@ check_verification_reanalyzes_changed_inputs() {
 }
 JSON
   printf '%s\n' 'test:' > "$repo/Makefile"
-  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null >/dev/null
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null >/dev/null || return 1
 
   cat > "$repo/package.json" <<'JSON'
 {
@@ -499,7 +501,7 @@ check_verification_reanalyzes_changed_non_node_inputs() {
   mkdir -p "$repo"
   touch "$repo/pyproject.toml"
 
-  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null >/dev/null
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null >/dev/null || return 1
   touch "$repo/poetry.lock"
 
   bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
@@ -511,6 +513,34 @@ plan = json.load(sys.stdin)
 commands = {entry["phase"]: entry["command"] for entry in plan["commands"]}
 assert commands["install"] == "poetry install"
 '
+}
+
+check_verification_reanalyzes_changed_env_templates() {
+  local template repo with_template without_template
+
+  for template in .env.example .env.sample; do
+    repo="$TEMP_DIR/changed-env-template-${template#.env.}-repo"
+    with_template="$TEMP_DIR/with-${template#.env.}.json"
+    without_template="$TEMP_DIR/without-${template#.env.}.json"
+    mkdir -p "$repo"
+
+    bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null >/dev/null
+    touch "$repo/$template"
+    bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null >"$with_template"
+    rm "$repo/$template"
+    bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null >"$without_template"
+
+    python3 - "$with_template" "$without_template" <<'PY'
+import json
+import sys
+
+with_template = json.load(open(sys.argv[1], encoding="utf-8"))
+without_template = json.load(open(sys.argv[2], encoding="utf-8"))
+note = "Repository has an env template; verify secrets are handled per the secret policy before running any integration test."
+assert note in with_template["notes"]
+assert note not in without_template["notes"]
+PY
+  done
 }
 
 check_verification_reanalyzes_without_fingerprint() {
@@ -655,6 +685,7 @@ run_test "verification reads UTF-8 analysis JSON" check_verification_reads_utf8_
 run_test "verification rejects shell syntax in safe commands" check_verification_rejects_shell_syntax_in_safe_commands
 run_test "verification reanalyzes changed inputs" check_verification_reanalyzes_changed_inputs
 run_test "verification reanalyzes changed non-node inputs" check_verification_reanalyzes_changed_non_node_inputs
+run_test "verification reanalyzes changed env templates" check_verification_reanalyzes_changed_env_templates
 run_test "verification reanalyzes without fingerprint" check_verification_reanalyzes_without_fingerprint
 run_test "analysis detects multi-target test rules" check_analysis_detects_multi_target_test_rule
 run_test "analysis detects multi-target rules in any order" check_analysis_detects_multi_target_rules_in_any_order

@@ -48,6 +48,8 @@ for name in (
     "go.sum",
     "Gemfile",
     "Gemfile.lock",
+    ".env.example",
+    ".env.sample",
     "Makefile",
 ):
     path = root / name
