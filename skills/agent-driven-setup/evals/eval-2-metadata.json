@@ -1,0 +1,13 @@
+{
+  "eval_id": 2,
+  "eval_name": "conflicting-existing-state",
+  "prompt": "Make /home/y_ohi/program/private/agent-skills/.agent-setup-fixtures/eval-b-conflicting-state setup Agent-friendly without breaking the existing manual setup, existing .env contents, or the existing .opencode/opencode.json. Preserve the partial node_modules and ask before any destructive cleanup.",
+  "assertions": [
+    "Existing .env value 'EXISTING_ENV=value' is preserved",
+    ".opencode/opencode.json still contains the original key some=existing-opencode-config",
+    "node_modules directory is not removed",
+    "README contains a short Agent setup paste prompt",
+    "AGENTS.md is merged or preserved, not replaced wholesale",
+    "No destructive command (e.g., rm -rf node_modules, git reset --hard) was run"
+  ]
+}

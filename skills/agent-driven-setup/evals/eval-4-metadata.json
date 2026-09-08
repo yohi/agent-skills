@@ -1,0 +1,12 @@
+{
+  "eval_id": 4,
+  "eval_name": "bootstrap-from-remote-url",
+  "prompt": "Design an Agent-driven setup framework for https://github.com/eval-e-remote-url/fixture.git based on its README and repository analysis. You do not have a writable local checkout. Report the selected approach, the Human entry point text, canonical setup source, and proposed file changes, and explicitly state that no files were modified.",
+  "assertions": [
+    "The report identifies the target repository by URL or name",
+    "The proposed Human entry point paste prompt points to a canonical setup source, not a local-only path",
+    "The report explicitly states that no files were modified due to the lack of a writable checkout",
+    "No files in the current workspace outside the target path were modified",
+    "The proposed framework does not reference yohi/agent-skills, agent-driven-setup meta-skill, or /mnt/skills/user paths"
+  ]
+}
