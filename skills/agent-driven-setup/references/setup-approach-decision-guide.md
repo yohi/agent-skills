@@ -29,9 +29,11 @@ Use when the repo already has a reliable installer or bootstrap script.
 Example paste prompt:
 
 ```text
-Set up https://github.com/org/repo for local development. Read README.md,
-follow the canonical installation instructions, ask before any privileged or
-destructive operation, and verify by running the test command.
+Set up https://github.com/org/repo for local development. First read
+https://raw.githubusercontent.com/org/repo/0123456789abcdef0123456789abcdef01234567/README.md
+as the canonical setup source. Clone the repository and check out the same
+commit SHA before following the installation instructions. Ask before any
+privileged or destructive operation, and verify by running the test command.
 ```
 
 ### B. Human README → dedicated Agent setup protocol (best when no installer exists)

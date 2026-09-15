@@ -51,11 +51,12 @@
       "id": 4,
       "eval_name": "bootstrap-from-remote-url",
       "prompt": "Design an Agent-driven setup framework for https://github.com/eval-e-remote-url/fixture.git. You do not have a writable local checkout.",
-      "expected_output": "The report identifies the target repo by URL, proposes a Human paste prompt that includes the repo URL and an immutable raw-content URL for the canonical setup source, and explicitly states no files were modified.",
+      "expected_output": "The report identifies the target repo by URL, proposes a Human paste prompt that includes the repo URL and an immutable raw-content URL using a full 40-character commit SHA for the canonical setup source, instructs checkout of the same SHA after cloning, and explicitly states no files were modified.",
       "files": [],
       "assertions": [
         "The report identifies the target repository by URL",
-        "The proposed Human entry point paste prompt includes the repository URL and an immutable raw-content canonical setup URL, not a local-only path or GitHub HTML (blob) URL",
+        "The proposed Human entry point paste prompt includes the repository URL and an immutable raw-content canonical setup URL using a full 40-character commit SHA, not a branch/tag ref, local-only path, or GitHub HTML (blob) URL",
+        "The proposed Human entry point instructs the Agent to check out the same commit SHA after cloning",
         "The report explicitly states that no files were modified due to the lack of a writable checkout",
         "No files in the target repository copy were modified",
         "The proposed framework does not reference yohi/agent-skills or /mnt/skills/user paths"

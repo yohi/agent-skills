@@ -31,8 +31,9 @@ Copy and paste the prompt below into an AI coding agent:
 
 ```text
 Set up https://github.com/org/repo from this repository. First read
-<CANONICAL_SETUP_SOURCE_RAW_URL> as the canonical setup source, then clone the
-repository and follow its installation instructions. Ask before any privileged
+<CANONICAL_SETUP_SOURCE_RAW_URL> as the canonical setup source. This URL uses a
+full 40-character commit SHA. Then clone the repository, check out the same
+commit SHA, and follow its installation instructions. Ask before any privileged
 or destructive operation, and verify by running the test command.
 ```
 ````
@@ -53,11 +54,13 @@ or destructive operation, and verify by running the test command.
 Replace `<CANONICAL_SETUP_SOURCE_PATH>` in local prompts with the actual
 canonical setup source path selected after running `analyze-repo.sh`. Replace
 `<CANONICAL_SETUP_SOURCE_RAW_URL>` in remote prompts with the corresponding
-immutable raw-content URL, such as
-`https://raw.githubusercontent.com/org/repo/<commit>/AGENTS.md`. Do not use a
-relative path or a GitHub HTML (`blob`) URL in a remote prompt. Do not leave a
-fixed `README.md` or `AGENTS.md` reference when another source was selected; use
-the standalone protocol file path or raw URL when `AGENTS.md` cannot be merged.
+immutable raw-content URL using the full 40-character commit SHA, such as
+`https://raw.githubusercontent.com/org/repo/0123456789abcdef0123456789abcdef01234567/AGENTS.md`.
+Never use a branch or tag name, a relative path, or a GitHub HTML (`blob`) URL in
+a remote prompt. After cloning, check out the same commit SHA embedded in the
+raw URL. Do not leave a fixed `README.md` or `AGENTS.md` reference when another
+source was selected; use the standalone protocol file path or raw URL when
+`AGENTS.md` cannot be merged.
 If the repository has separate user install and developer setup tracks,
 customize each prompt with its own canonical source.
 
