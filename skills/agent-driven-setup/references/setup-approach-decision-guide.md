@@ -31,9 +31,10 @@ Example paste prompt:
 ```text
 Set up https://github.com/org/repo for local development. First read
 https://raw.githubusercontent.com/org/repo/0123456789abcdef0123456789abcdef01234567/README.md
-as the canonical setup source. Clone the repository and check out the same
-commit SHA before following the installation instructions. Ask before any
-privileged or destructive operation, and verify by running the test command.
+as the canonical setup source. The raw URL must use a full 40-character commit
+SHA, never a branch or tag. Clone the repository and check out the same commit
+SHA before following the installation instructions. Ask before any privileged
+or destructive operation, and verify by running the test command.
 ```
 
 ### B. Human README → dedicated Agent setup protocol (best when no installer exists)
