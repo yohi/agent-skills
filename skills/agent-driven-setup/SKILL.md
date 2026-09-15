@@ -107,9 +107,11 @@ Add a short section to the repository's `README.md` using the template in
 The entry point must:
 - Point to "this repository" and the canonical setup source, not a local-only
   or contributor-specific path.
-- For remote / user-install cases, include the repository URL and the
-  canonical setup source so a fresh Agent session can bootstrap without
-  prior context.
+- For remote / user-install cases, include the repository URL and an immutable
+  raw-content URL for the canonical setup source, such as
+  `https://raw.githubusercontent.com/org/repo/<commit>/AGENTS.md`. A relative
+  path or GitHub HTML (`blob`) URL cannot bootstrap a fresh Agent session before
+  it has cloned the repository.
 - Remain short enough to paste into an AI coding agent.
 - Preserve existing manual install instructions.
 
