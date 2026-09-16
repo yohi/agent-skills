@@ -1,22 +1,22 @@
-# Agent-driven Setup — Spec 1: Setup Contract & Cross-layer Audit Implementation Plan
+# Agent-driven Setup — Spec 1: Setup Contract and Cross-layer Audit Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-_SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add Setup Contract schema, `audit-contract.sh`, and complexity-based enhanced workflow to `skills/agent-driven-setup/` so complex setups expose expected topology before changes are made.
+**Goal:** Add the normative Setup Contract v1, deterministic contract discovery, and read-only cross-layer audit required for complex setup verification.
 
-**Architecture:** A single YAML frontmatter + Markdown Setup Contract becomes the source of truth for expected setup topology. A new `audit-contract.sh` compares the contract against repository evidence and emits observed topology plus `confirmed/candidate/unresolved` discrepancies. SKILL.md gains an optional enhanced workflow for complex repositories while preserving the existing simple-repo path.
+**Architecture:** `setup-contract-schema.md` is the sole schema authority. `audit-contract.sh` parses only that YAML frontmatter, discovers it with the specified protocol, and emits the fixed Audit Report interface. It never writes to the target repository. Spec 2 consumes its report but does not change audit findings into runtime status.
 
-**Tech Stack:** Bash (POSIX-compatible where practical, Bash 4+ for associative features), Python 3 with PyYAML (explicitly permitted skill development dependency), Markdown, YAML frontmatter. All scripts must document PyYAML requirement in comments and fail gracefully with a clear error if it is missing.
+**Tech Stack:** Bash 4+, Python 3, PyYAML `>=6.0,<7`, Markdown, YAML frontmatter.
 
 ## Global Constraints
 
-- P0 + P1 only; P2 eval suite expansion is out of scope.
-- Generated framework must remain independent of `yohi/agent-skills` after introduction.
-- All `audit-contract.sh` operations must be read-only in the target repository.
-- Simple repositories without complexity triggers continue using the existing workflow unchanged.
-- Setup Contract placement is repository-policy dependent; do not hard-code `.agent-setup/` paths.
-- No absolute paths specific to a user or machine may be committed.
-- Do not create new AI agent config files (`.opencode/`, `opencode.json(c)`, etc.).
+- P0 and P1 only. Do not modify `evals/evals.json` or eval cases.
+- The Setup Contract v1 schema and discovery protocol in the design are normative.
+- PyYAML is a runtime dependency; scripts preflight it and never install it.
+- `audit-contract.sh` performs no target-repository writes.
+- All target paths are repository-relative and may not escape the target root.
+- The existing simple-repository path remains unchanged.
+- Do not create AI agent configuration files.
 
 ---
 
@@ -24,405 +24,205 @@
 
 | File | Responsibility |
 |---|---|
-| `skills/agent-driven-setup/references/setup-contract-schema.md` | Defines YAML frontmatter schema, layer vocabulary, and example Setup Contract. |
-| `skills/agent-driven-setup/references/fixtures/example-setup-contract.yaml` | Example Setup Contract fixture used by tests and schema documentation. |
-| `skills/agent-driven-setup/scripts/audit-contract.sh` | Reads a Setup Contract, verifies referential integrity, scans repository evidence, emits observed topology and discrepancies. |
-| `skills/agent-driven-setup/references/setup-approach-decision-guide.md` | Adds complexity trigger guidance and enhanced workflow selection. |
-| `skills/agent-driven-setup/references/repository-investigation-checklist.md` | Adds Setup Contract / target type / mutation surface investigation items. |
-| `skills/agent-driven-setup/SKILL.md` | Adds optional enhanced workflow (complexity → contract extraction → audit) without breaking simple-repo path. |
-| `skills/agent-driven-setup/scripts/test-scripts.sh` | Adds tests for `audit-contract.sh` output shape and referential integrity. |
+| `skills/agent-driven-setup/references/setup-contract-schema.md` | Reproduces the normative v1 key, reference, path, and discovery rules. |
+| `skills/agent-driven-setup/references/fixtures/example-setup-contract.yaml` | Valid MCP Contract v1 fixture. |
+| `skills/agent-driven-setup/requirements.txt` | Runtime PyYAML range. |
+| `skills/agent-driven-setup/scripts/audit-contract.sh` | Deterministic discovery, schema validation, static audit, and fixed report output. |
+| `skills/agent-driven-setup/scripts/analyze-repo.sh` | Evidence-only `complexity_triggers` producer. |
+| `skills/agent-driven-setup/scripts/test-scripts.sh` | Contract and audit regression suite. |
+| `skills/agent-driven-setup/references/*.md`, `SKILL.md` | Enhanced-workflow guidance only. |
 
 ---
 
-### Task 1: Create `setup-contract-schema.md` reference
+### Task 1: Publish Setup Contract v1 and parser ownership
 
 **Files:**
 - Create: `skills/agent-driven-setup/references/setup-contract-schema.md`
 - Create: `skills/agent-driven-setup/references/fixtures/example-setup-contract.yaml`
+- Create: `skills/agent-driven-setup/requirements.txt`
+- Modify: `skills/agent-driven-setup/scripts/test-scripts.sh`
 - Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
 
-**Interfaces:**
-- Produces: Markdown document describing `setup_contract_schema_version: 1`, frontmatter keys, layer vocabulary, handoff contract, and example contract.
+**Depends on:** none.
 
-- [ ] **Step 1: Write the reference document**
+**Consumes:** Design sections “Setup Contract v1 規範 schema”, “Contract discovery protocol”, and “Parser dependency policy”.
 
-Create `skills/agent-driven-setup/references/setup-contract-schema.md` with:
-- Overview of single-artifact contract (YAML frontmatter + Markdown body).
-- Required/optional frontmatter fields.
-- `configuration_branches` layer mapping using recommended vocabulary.
-- `verification` section with stable item IDs, `blocked_by`, `required_for_e2e`, `required_capabilities`, `handoff_id`.
-- `handoffs` section with `id`, `actor`, `action`, `prerequisites`, `expected_outcome`, `required_evidence`.
-- `external_effects` with optional `mutation_surfaces` for dry-run snapshot scoping.
-- Example full contract for an MCP repository.
-- Notes on repository-policy-driven placement and discovery.
+**Produces:** Contract v1 reference, valid MCP fixture, and one-line dependency file containing `PyYAML>=6.0,<7`.
 
-- [ ] **Step 2: Add a test that validates an example contract fixture**
+**Interfaces:** `setup_contract_schema_version` is integer `1`; target IDs and verification target keys match; layer and mutation-surface discriminators use the exact design vocabulary; PyYAML missing is `dependency_unavailable` / exit 3.
 
-In `skills/agent-driven-setup/scripts/test-scripts.sh`, add a test step that loads an example Setup Contract fixture (stored under `skills/agent-driven-setup/references/fixtures/example-setup-contract.yaml` or inlined) and asserts `setup_contract_schema_version` is present. Use Python `yaml.safe_load` from PyYAML, which is an explicitly permitted dependency for this skill's scripts. Detect missing PyYAML and print a clear error. Do not treat the schema reference document itself as a Setup Contract.
+**RED:**
+- [ ] Add `check_setup_contract_fixture_rejects_missing_runtime()` with a copied valid fixture whose `setup_target.mcp_main.runtime` is removed.
+- [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh`.
+- [ ] Confirm failure from `assert "runtime" in target` while the schema document and fixture do not yet exist.
 
-```bash
-python3 - <<'PY'
-import sys
-from pathlib import Path
-try:
-    import yaml
-except ImportError:
-    print("PyYAML is required for Setup Contract parsing; install it for the skill development environment.", file=sys.stderr)
-    sys.exit(1)
+**GREEN:**
+- [ ] Write the schema reference as a field table, including requiredness, null meaning, IDs, path bases, discriminators, reference semantics, and exact discovery marker `<!-- agent-setup-contract: path -->`.
+- [ ] Add the complete MCP fixture and `requirements.txt`.
+- [ ] Extend the validation helper to load the fixture with `yaml.safe_load` and assert all required v1 fields, including a valid `mcp_request` probe and mutation surface.
+- [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh` and confirm the fixture test passes.
 
-fixture = Path("skills/agent-driven-setup/references/fixtures/example-setup-contract.yaml")
-data = yaml.safe_load(fixture.read_text())
-assert data.get("setup_contract_schema_version") == 1, "missing or invalid schema version"
-PY
-```
+**REFACTOR:**
+- [ ] Extract repeated fixture assertions into one local test helper only if two tests require the same assertion sequence; rerun the suite.
 
-- [ ] **Step 3: Run the test to verify it passes**
+**Commit:**
+- [ ] Stage only the three created files and `test-scripts.sh`.
+- [ ] Commit: `docs: Setup Contract v1スキーマを定義`.
 
-Run:
-
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
-
-Expected: PASS or at least no failure from the new test.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add \
-  skills/agent-driven-setup/references/setup-contract-schema.md \
-  skills/agent-driven-setup/references/fixtures/example-setup-contract.yaml \
-  skills/agent-driven-setup/scripts/test-scripts.sh
-git commit -m "docs: add Setup Contract schema reference"
-```
-
----
-
-### Task 2: Create `audit-contract.sh`
+### Task 2: Implement deterministic discovery and referential validation
 
 **Files:**
 - Create: `skills/agent-driven-setup/scripts/audit-contract.sh`
 - Modify: `skills/agent-driven-setup/scripts/test-scripts.sh`
-
-**Interfaces:**
-- Consumes: `--contract <path>` or repository-discovered contract file.
-- Produces: JSON to stdout with `contract_discovery`, `observed_topology`, `discrepancies`, `schema_errors`, `next_actions`.
-
-- [ ] **Step 1: Write the script skeleton**
-
-Create `skills/agent-driven-setup/scripts/audit-contract.sh` with:
-- `set -euo pipefail`
-- Argument parsing: `REPO_PATH`, optional `--contract`
-- Functions: `fail(msg)` that prints JSON error to stderr and exits 1.
-
-- [ ] **Step 2: Implement Contract discovery**
-
-Implement discovery priority:
-1. explicit `--contract` path
-2. repository-declared canonical contract path (read from `AGENTS.md` or README section)
-3. marker scan for files with `setup_contract_schema_version` in `docs/`, `scripts/`, repo root
-4. if not found: emit `contract_discovery.status = not_found` and exit 0 with no findings
-5. if multiple ambiguous: `contract_discovery.status = ambiguous`
-
-Output the discovery block as the first field of the JSON report.
-
-- [ ] **Step 3: Parse frontmatter and validate schema**
-
-Use Python to parse YAML frontmatter. Validate that:
-- `setup_contract_schema_version` is present
-- `verification.targets[*].items[*].id` values are unique across the contract
-- `verification.targets[*].items[*].blocked_by` IDs exist
-- all `handoff_id` references (from verification, registration, discovery, activation, external_effects) resolve to defined `handoffs`
-- `required_capabilities` entries are non-empty strings and are referenced consistently within the contract (do not validate against `setup-capability-matrix.md`; that is Spec 2 responsibility)
-
-Report any issues in `schema_errors`.
-
-- [ ] **Step 4: Build observed topology**
-
-For each `configuration_branches[*].layers` entry:
-- `env.key`: search `.env.example`, `.env.sample` for key presence
-- `cli.option`: grep for option string in `scripts/`, `README.md`, package scripts
-- `generated_config.path` + `key`: check file existence and key reference
-- `runtime_consumer.path` + `symbol`: check file existence and symbol reference
-- record `found`, `references`, and `note`
-
-Also verify `installation`/`registration`/`discovery`/`activation` reference targets exist.
-
-- [ ] **Step 5: Detect discrepancies**
-
-For each expected layer reference:
-- if declared path/key/symbol does not exist → `finding_state: confirmed`
-- if heuristic suggests missing wiring (e.g., option present but no env key) → `finding_state: candidate`
-- if dynamic/indirect wiring suspected → `finding_state: unresolved`
-
-Add `next_actions` grouping findings by `Agent semantic review`.
-
-- [ ] **Step 6: Add tests for `audit-contract.sh`**
-
-In `test-scripts.sh`, add:
-1. A test repo fixture under `/tmp/` containing a valid Setup Contract; run `audit-contract.sh` and assert `contract_discovery.status == found`.
-2. A fixture with a missing contract; assert `not_found`.
-3. A fixture with a contract referencing a missing generated config key; assert one `confirmed` discrepancy.
-4. A fixture with an undefined `handoff_id`; assert one `schema_errors` entry.
-
-- [ ] **Step 7: Run tests**
-
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
-
-Expected: all new tests pass.
-
-- [ ] **Step 8: Commit**
-
-```bash
-git add skills/agent-driven-setup/scripts/audit-contract.sh
-# stage test-scripts.sh changes if modified
-git commit -m "feat: add audit-contract.sh for static cross-layer audit"
-```
-
----
-
-### Task 3: Update `setup-approach-decision-guide.md` with complexity guidance
-
-**Files:**
-- Modify: `skills/agent-driven-setup/references/setup-approach-decision-guide.md`
 - Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
 
-**Interfaces:**
-- Produces: updated decision guide that references complexity triggers and enhanced workflow.
+**Depends on:** Task 1.
 
-- [ ] **Step 1: Add a complexity section**
+**Consumes:** the v1 fixture, PyYAML dependency file, and contract-discovery protocol.
 
-Insert a new section near the top:
-- Definition of complexity triggers.
-- Rule: trigger presence does not automatically select enhanced workflow; Agent uses trigger + repository context.
-- Reference to `analyze-repo.sh` output format for triggers.
-- When enhanced workflow is chosen, reference `setup-contract-schema.md` and `audit-contract.sh`.
+**Produces:** `audit-contract.sh [--contract <repo-relative-path>] [--format json|markdown|both] [--output-dir <target-external-dir>] <repo-path>` with `contract_discovery`, `schema_errors`, and exit codes 0, 2, 3.
 
-- [ ] **Step 2: Add a verification test**
+**Interfaces:** explicit path has priority; declaration markers are standalone exact lines in root `AGENTS.md` then `README.md`; marker scan considers only `SETUP-CONTRACT.md` and `docs/**/*.md`; report key is always `discrepancies`.
 
-Add a lightweight test that checks the section header exists:
+**RED:**
+- [ ] Add fixtures for an explicit contract, conflicting `AGENTS.md`/`README.md` markers, two marker-scan candidates, an escaping `../contract.md` path, undefined `handoff_id`, and cyclic `blocked_by`.
+- [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh`.
+- [ ] Confirm failures because `audit-contract.sh` does not exist and the expected JSON fields cannot be read.
 
-```bash
-if grep -q "## Complexity" skills/agent-driven-setup/references/setup-approach-decision-guide.md; then
-  echo "complexity section present"
-else
-  echo "FAIL: missing complexity section" >&2
-  exit 1
-fi
-```
+**GREEN:**
+- [ ] Add PyYAML preflight; print an install handoff to stderr and exit 3 without installing.
+- [ ] Parse options before the positional repository path; reject invalid grammar and target-internal `--output-dir` with exit 2.
+- [ ] Implement the three discovery stages and validate target IDs, layer shapes, phase references, handoff references, item uniqueness, and `blocked_by` acyclicity.
+- [ ] Run the suite and confirm `found`, `not_found`, `ambiguous`, and `contract_error` fixtures emit their exact status and `schema_errors` payloads.
 
-- [ ] **Step 3: Run tests**
+**REFACTOR:**
+- [ ] Consolidate discovery result serialization if JSON and Markdown paths diverge; rerun the suite.
 
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
+**Commit:**
+- [ ] Stage only `audit-contract.sh` and `test-scripts.sh`.
+- [ ] Commit: `feat: Setup Contract監査の発見と参照検証を追加`.
 
-Expected: PASS.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add skills/agent-driven-setup/references/setup-approach-decision-guide.md
-git commit -m "docs: add complexity guidance to setup approach decision guide"
-```
-
----
-
-### Task 4: Update `repository-investigation-checklist.md`
+### Task 3: Implement static topology and fixed Audit Report output
 
 **Files:**
-- Modify: `skills/agent-driven-setup/references/repository-investigation-checklist.md`
+- Modify: `skills/agent-driven-setup/scripts/audit-contract.sh`
+- Modify: `skills/agent-driven-setup/scripts/test-scripts.sh`
 - Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
 
-**Interfaces:**
-- Produces: updated checklist including Setup Contract, target type, and mutation surface investigation.
+**Depends on:** Task 2.
 
-- [ ] **Step 1: Add new checklist sections**
+**Consumes:** validated Contract v1 layer locators and phase operation references.
 
-Add sections:
-- 11. Setup Contract and complexity
-  - existing contract files / markers
-  - target type hints (MCP, Skill, Plugin, Hook, CLI, Service)
-  - configuration branches and known choices
-- 12. Mutation surfaces for dry-run
-  - `.env*` files
-  - Agent config / Skill / Plugin directories
-  - external service state references
+**Produces:** read-only `observed_topology`, `discrepancies`, and `next_actions`; every discrepancy contains `finding_state` and non-empty `affected_target_ids`.
 
-- [ ] **Step 2: Add verification test**
+**Interfaces:** `env`, `cli`, `generated_config`, and `runtime_consumer` use their v1 field layouts; `confirmed`, `candidate`, and `unresolved` are audit-only states; `--format both` writes both report files outside the target and keeps JSON on stdout.
 
-Add test that new section numbers and headers exist.
+**RED:**
+- [ ] Add a fixture with an absent generated-config key, an indirect runtime consumer, and an unrelated valid target.
+- [ ] Run the suite and confirm it fails because no `confirmed` discrepancy with `affected_target_ids` is emitted and Markdown artifacts do not exist.
 
-- [ ] **Step 3: Run tests**
+**GREEN:**
+- [ ] Scan every declared branch and phase reference using the required locator fields.
+- [ ] Emit `confirmed` for missing concrete references, `candidate` for heuristic disconnects, and `unresolved` for dynamic wiring; never mutate the fixture repository.
+- [ ] Implement JSON, Markdown, and both-format output with the fixed top-level keys.
+- [ ] Run the suite and confirm the fixture reports the expected state, target IDs, and two external report artifacts.
 
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
+**REFACTOR:**
+- [ ] Share report data construction between JSON and Markdown rendering if their finding counts differ; rerun the suite.
 
-Expected: PASS.
+**Commit:**
+- [ ] Stage only `audit-contract.sh` and `test-scripts.sh`.
+- [ ] Commit: `feat: 静的横断監査レポートを追加`.
 
-- [ ] **Step 4: Commit**
-
-```bash
-git add skills/agent-driven-setup/references/repository-investigation-checklist.md
-git commit -m "docs: extend investigation checklist for setup contract and mutation surfaces"
-```
-
----
-
-### Task 5: Update `SKILL.md` with enhanced workflow
-
-**Files:**
-- Modify: `skills/agent-driven-setup/SKILL.md`
-- Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
-
-**Interfaces:**
-- Produces: SKILL.md with optional enhanced workflow that does not affect simple-repo path.
-
-- [ ] **Step 1: Insert complexity determination step**
-
-After Step 2 (Investigate the repository), add Step 2.5:
-- Run `analyze-repo.sh`.
-- If `complexity_triggers` empty and one-command install path clear, use standard workflow.
-- Otherwise use enhanced workflow.
-- Ask user only when ambiguity materially affects scope.
-
-- [ ] **Step 2: Insert Setup Contract extraction step**
-
-Add Step 3 (enhanced) before existing Step 3:
-- For complex setups, create/update a Setup Contract using `setup-contract-schema.md`.
-- Respect repository documentation policy for placement.
-- Define setup intent, targets, branches, writers/consumers, verification items, handoffs.
-
-- [ ] **Step 3: Insert audit step**
-
-Add Step 4 (enhanced):
-- Run `audit-contract.sh <repo-path>`.
-- Review `confirmed`, `candidate`, `unresolved`.
-- Treat `confirmed` as established static discrepancies; determine gap classification from repository context.
-- Apply fixes to repository code or contract as appropriate; do not auto-apply.
-
-- [ ] **Step 4: Renumber subsequent steps only if necessary**
-
-Keep existing simple workflow intact; use explicit labels like `(enhanced)` to avoid renumbering confusion.
-
-- [ ] **Step 5: Add test verifying workflow sections exist**
-
-Test for new section headers in SKILL.md.
-
-- [ ] **Step 6: Run tests**
-
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
-
-Expected: PASS.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add skills/agent-driven-setup/SKILL.md
-git commit -m "docs: add enhanced workflow for setup contract and audit"
-```
-
----
-
-### Task 6: Update `analyze-repo.sh` to surface complexity triggers
+### Task 4: Add evidence-only complexity triggers
 
 **Files:**
 - Modify: `skills/agent-driven-setup/scripts/analyze-repo.sh`
 - Modify: `skills/agent-driven-setup/scripts/test-scripts.sh`
-
-**Interfaces:**
-- Produces: JSON output with a new `complexity_triggers` array.
-
-- [ ] **Step 1: Detect trigger evidence**
-
-Add detection heuristics:
-- Multiple configuration files with overlapping keys (e.g., `.env.example` + multiple config generators).
-- Presence of `mcpServers` or `mcp` in known config files.
-- Presence of `SKILL.md` in non-meta directories (potential Skill install target).
-- Multiple distinct `scripts/` bootstrap/config scripts.
-- External service references (urls, gateways, webhooks).
-- Secret-bearing env templates with many keys.
-
-Emit as `complexity_triggers` array with `id`, `evidence`, `note`.
-
-- [ ] **Step 2: Keep output backward compatible**
-
-Existing keys remain unchanged; `complexity_triggers` is additive.
-
-- [ ] **Step 3: Add tests**
-
-Create fixture repos and assert expected triggers are detected.
-
-- [ ] **Step 4: Run tests**
-
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add skills/agent-driven-setup/scripts/analyze-repo.sh
-git commit -m "feat: surface complexity triggers in analyze-repo.sh"
-```
-
----
-
-### Task 7: Final verification and integration readiness
-
-**Files:**
-- Modify: none (read-only verification)
 - Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
 
-- [ ] **Step 1: Run full script test suite**
+**Depends on:** Task 1.
 
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
+**Consumes:** design complexity trigger vocabulary.
 
-Expected: all tests pass.
+**Produces:** additive `complexity_triggers: [{id, evidence, note}]` in the existing analysis JSON.
 
-- [ ] **Step 2: Run skill validation**
+**Interfaces:** existing analysis JSON keys and values are unchanged; triggers never select a workflow mechanically.
 
-```bash
-node scripts/validate-skills.js
-```
+**RED:**
+- [ ] Add a fixture with an MCP config, multiple config writers, and a webhook URL; assert the three exact trigger IDs.
+- [ ] Run the suite and confirm failure because `complexity_triggers` is absent.
 
-Expected: 0 errors, 0 warnings.
+**GREEN:**
+- [ ] Add deterministic read-only heuristics for the declared evidence.
+- [ ] Emit an empty array for a simple fixture and the exact ID/evidence/note shape for the complex fixture.
+- [ ] Run the suite and confirm both new cases pass and prior analysis assertions remain unchanged.
 
-- [ ] **Step 3: Inspect diff**
+**REFACTOR:**
+- [ ] Extract only duplicated evidence collection; rerun the suite.
 
-```bash
-git diff --stat
-```
+**Commit:**
+- [ ] Stage only `analyze-repo.sh` and `test-scripts.sh`.
+- [ ] Commit: `feat: setup複雑性の根拠を出力`.
 
-Expected: only intended files changed.
+### Task 5: Document the additive enhanced workflow
 
-- [ ] **Step 4: Commit any final fixes**
+**Files:**
+- Modify: `skills/agent-driven-setup/references/setup-approach-decision-guide.md`
+- Modify: `skills/agent-driven-setup/references/repository-investigation-checklist.md`
+- Modify: `skills/agent-driven-setup/SKILL.md`
+- Modify: `skills/agent-driven-setup/scripts/test-scripts.sh`
+- Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
 
-If fixes are needed:
+**Depends on:** Tasks 1 through 4.
 
-```bash
-git add ...
-git commit -m "fix: address Spec 1 review findings"
-```
+**Consumes:** Contract v1, audit grammar, discovery protocol, and trigger output.
 
----
+**Produces:** documentation-only enhanced workflow that preserves the simple-repository path.
 
-## Self-Review Checklist
+**Interfaces:** no runtime interface changes; complex repositories use Contract extraction then audit; `not_found` returns to extraction and `ambiguous` requires semantic review.
 
-- [ ] `setup-contract-schema.md` covers all frontmatter keys from the design doc.
-- [ ] `audit-contract.sh` is fully read-only and reports `not_found`/`ambiguous` discovery states.
-- [ ] `audit-contract.sh` does not evaluate capability availability (Spec 2 responsibility).
-- [ ] `finding_state` definitions match design doc exactly.
-- [ ] `SKILL.md` enhanced workflow is additive and simple-repo path unchanged.
-- [ ] `analyze-repo.sh` complexity triggers are evidence-only, not a mechanical score.
-- [ ] No P2 eval expansion is included.
-- [ ] No new AI agent config files are created.
+**RED:**
+- [ ] Add documentation assertions for the exact Contract marker syntax, `audit-contract.sh` grammar, mutation-surface investigation, and simple-path preservation.
+- [ ] Run the suite and confirm the header/content assertions fail before documentation is updated.
+
+**GREEN:**
+- [ ] Document trigger evidence, Contract placement, discovery marker, target type, configuration branches, and mutation surfaces.
+- [ ] Document the enhanced flow without changing the existing standard flow.
+- [ ] Run the suite and confirm all documentation assertions pass.
+
+**REFACTOR:**
+- [ ] Remove duplicated prose while preserving the normative schema reference; rerun the suite.
+
+**Commit:**
+- [ ] Stage only the three documentation files and `test-scripts.sh`.
+- [ ] Commit: `docs: 強化setup監査ワークフローを追加`.
+
+### Task 6: Verify Spec 1 integration readiness
+
+**Files:**
+- Create: none
+- Modify: none
+- Test: `skills/agent-driven-setup/scripts/test-scripts.sh`, `scripts/validate-skills.js`
+
+**Depends on:** Tasks 1 through 5.
+
+**Consumes:** all Spec 1 deliverables.
+
+**Produces:** evidence for the integration checkpoint, not new implementation.
+
+**Interfaces:** record the implementation baseline SHA before Task 1; final scope checks compare that SHA to `HEAD`, not only the working tree.
+
+**RED:**
+- [ ] Not applicable: this is a read-only verification task.
+
+**GREEN:**
+- [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh` and confirm success.
+- [ ] Run `node scripts/validate-skills.js` and confirm 0 errors and 0 warnings.
+- [ ] Run `git diff --name-only "$IMPLEMENTATION_BASE_SHA"...HEAD` and confirm the intended Spec 1 paths only.
+
+**REFACTOR:**
+- [ ] Not applicable.
+
+**Commit:**
+- [ ] Do not create an empty commit; commit only required correction files with `fix: Spec 1統合検証の指摘を修正`.

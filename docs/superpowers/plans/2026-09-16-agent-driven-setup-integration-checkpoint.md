@@ -1,117 +1,137 @@
 # Agent-driven Setup — Integration Checkpoint for Issue #12 P0+P1
 
-**Goal:** Ensure Spec 1 (Setup Contract & Cross-layer Audit) and Spec 2 (Capability & Verification Execution) work together correctly and satisfy the acceptance criteria of Issue #12 P0+P1, without expanding scope into P2.
+**Goal:** Prove that Spec 1 static audit and Spec 2 runtime verification consume the same Setup Contract v1 without expanding into P2.
 
-**When to run:** After Implementation Plan 1 and Implementation Plan 2 are both complete and each has passed its own verification.
+**When to run:** Record the implementation baseline before the first implementation task, then run this checkpoint after both implementation plans have passed their task-level verification.
 
----
+## Implementation Baseline and Scope Guard
 
-## Integration Test Matrix
+Before implementing either plan, record the current commit once and preserve it in the execution log:
 
-| Scenario | Spec 1 output | Spec 2 input | Expected result |
-|---|---|---|---|
-| Simple repo with no triggers | `complexity_triggers` empty, standard workflow recommended | standard `verify-setup.sh` path | no Setup Contract created, existing behavior unchanged |
-| Complex MCP repo with valid contract | `contract_discovery: found`, audit `confirmed: 0` | capability assessment, verification report | `e2e_status` follows runtime evidence; unverified items produce handoffs |
-| Complex repo with static disconnect | audit emits `confirmed` or `candidate` discrepancy | verification does not claim E2E verified until disconnect resolved | report shows gap classification and required fix |
-| Complex repo with unavailable capability | audit passes schema, no static disconnect | capability assessment marks `mcp_runtime_probe: unavailable` | corresponding verification item `not_verified` + handoff |
-| Capability available but target operation fails | audit passes schema | `mcp_runtime_probe: available`, MCP initialize executed, server returns error | capability stays `available`; verification item `not_verified` with runtime failure reason |
-| Dry-run on mutating setup | `audit-contract.sh` read-only, no runtime execution | `verify-setup.sh --dry-run` classifies install/registration as `not_executed`, snapshot clean | no persistent state changes |
-| Dry-run invariant violation | — | `verify-setup.sh --dry-run` detects unexpected mutation | `dry_run_invariant_violation` reported and dry-run fails |
-| Handoff lifecycle | Contract defines handoff | Report records handoff completed, evidence acquired, evaluation_result `needs_review` | verification item remains `not_verified` until evaluation passes |
+```bash
+IMPLEMENTATION_BASE_SHA="$(git rev-parse HEAD)"
+```
+
+Final scope validation must inspect both committed and uncommitted changes. Do not use a bare `git diff` as the implementation scope check.
+
+```bash
+git diff --name-only "$IMPLEMENTATION_BASE_SHA"...HEAD
+git diff --stat "$IMPLEMENTATION_BASE_SHA"...HEAD
+git status --short
+git diff --name-only "$IMPLEMENTATION_BASE_SHA"...HEAD | \
+  grep -E '(^|/)evals/evals\.json$|(^|/)eval[^/]*/.*\.json$' && \
+  { echo "FAIL: P2 eval scope detected"; exit 1; } || true
+```
+
+Permitted implementation paths are exactly these prefixes and files:
+
+```text
+skills/agent-driven-setup/SKILL.md
+skills/agent-driven-setup/requirements.txt
+skills/agent-driven-setup/references/
+skills/agent-driven-setup/scripts/analyze-repo.sh
+skills/agent-driven-setup/scripts/audit-contract.sh
+skills/agent-driven-setup/scripts/run-target-probes.sh
+skills/agent-driven-setup/scripts/test-scripts.sh
+skills/agent-driven-setup/scripts/verify-setup.sh
+```
+
+Any other implementation-delta path requires an explicit scope decision before sign-off. The four planning documents on the review branch predate `IMPLEMENTATION_BASE_SHA` and are therefore excluded from this implementation delta.
 
 ---
 
 ## Boundary Contract Verification
 
-Verify that the files produced by Spec 1 are correctly consumed by Spec 2:
-
-1. **Setup Contract schema**
-   - `audit-contract.sh` and `verify-setup.sh` parse the same YAML frontmatter keys.
-   - `setup_contract_schema_version: 1` is the stable identifier.
-
-2. **Verification item ID stability**
-   - IDs generated in Spec 1 are referenced by `blocked_by` and handoffs without change in Spec 2.
-
-3. **Capability requirement flow**
-   - Contract declares `required_capabilities`.
-   - Spec 2 `capability_assessment` maps each to `available | unavailable | unknown`.
-   - `unavailable` or `unknown` capabilities mark the dependent verification item `not_verified` and use the Contract-defined handoff when one is defined/applicable. They never route to false success, and they never invent a handoff that is not defined in the Contract.
-
-4. **Handoff definition vs execution record**
-   - Contract contains handoff definitions.
-   - Verification report contains handoff execution records with `evaluation_result`.
-
-5. **Mutation surface continuity**
-   - Contract `external_effects.mutation_surfaces` matches `verify-setup.sh --dry-run` snapshot targets.
-
-6. **Audit finding state semantics**
-   - `confirmed`, `candidate`, `unresolved` from Spec 1 do not directly set Spec 2 verification status; they inform Agent review.
-
----
-
-## Acceptance Criteria Mapping (Issue #12)
-
-| # | Criterion | Verification method |
+| Boundary | Automated evidence | Required result |
 |---|---|---|
-| 1 | 複雑な setup では Setup Contract が把握される | Complex repo integration test creates/reads contract |
-| 2 | complexity trigger が代表例として定義され未知の同等ケースも扱える | `analyze-repo.sh` emits triggers; Agent can override |
-| 3 | 選択された設定が user input から actual consumer / activation まで追跡される | Contract branch layer mapping + audit observed topology |
-| 4 | 非選択の公開 branch も明白な disconnect が監査される | `audit-contract.sh` checks all declared branches |
-| 5 | setup artifact の生成・配置だけを E2E success としない | `verify-setup.sh` requires representative operation evidence |
-| 6 | setup target に応じた representative operation が verification contract に含まれる | Contract defines activation/representative_operation |
-| 7 | Skill では install、Agent discovery、representative activation を別々に検証可能 | Verification report has separate items |
-| 8 | Skill activation を観測可能なら代表 prompt 等による activation verification を行う | `representative_activation_probe` used when available |
-| 9 | Skill activation を観測不能なら discovery と activation の status を分離する | `discovery: verified`, `activation: not_verified` in report |
-| 10 | MCP では initialize、tool discovery、可能なら representative tool call を含む | MCP verification items cover all four phases |
-| 11 | Plugin / Hook / CLI / Service 等も target 固有の利用可能性まで検証可能である | Generic E2E chain applies to `other/custom` target |
-| 12 | 安全に実行できない E2E operation を成功扱いしない | Capability `unavailable` or `unknown` → item `not_verified`; Contract-defined handoff if applicable, never false success |
-| 13 | implementation completion と verification completion が分離される | Report has separate sections |
-| 14 | verification status が主要項目ごとに保持される | `verification.targets[*].items[*].status` |
-| 15 | 未検証項目に理由、handoff、次操作、完了証跡が存在する | Every `not_verified` item has `reason`, `next_step`, `required_evidence`, and `handoff_id` when a Contract-defined handoff is applicable |
-| 16 | dry-run では永続状態を変更しない | Snapshot + classifier tests |
-| 17 | dry-run では Skill install / Plugin registration 等も実行しない | Dry-run classifier test |
-| 18 | canonical source が用途に応じて mutable / immutable に使い分けられる | Contract `canonical_source.ref` supports both with note |
-| 19 | Capability Matrix が install capability と discovery/activation capability を区別できる | `setup-capability-matrix.md` definitions |
-| 20 | Setup Contract 成立に必要な gap は repository 本体も修正対象にできる | Gap classification allows bootstrap/configuration/runtime fixes |
-| 21 | 挙動変更には原則 fail-first の回帰証拠が存在する | TDD guidance in `verification-patterns.md` / SKILL.md |
-| 22 | 自動化不能な例外は明示され、完全 Verified 扱いにならない | Exception records in verification report |
-| 23 | repository 固有 policy が generic default より優先される | Contract placement and target type detection priorities |
-| 24 | existing manual setup、CI、Agent setup を破壊しない | Simple repo path unchanged; audit is read-only |
-| 25 | 既存利用者との意味的後方互換性を維持する | No forced migration; enhanced workflow is additive |
-| 26 | 単純な repository に不要な heavyweight verification を要求しない | Trigger-based gating |
-| 27 | Issue #12 P2 へスコープ拡大しない | No `evals.json` expansion in changes |
+| Contract schema → audit | `test-scripts.sh`: valid fixture, missing `runtime`, invalid layer shape, undefined reference, cyclic `blocked_by` | Both scripts parse Contract v1 or fail with exit 2; all IDs and references resolve. |
+| Discovery → audit | explicit path, declared marker, zero/one/multiple marker-scan fixtures | `found`, `not_found`, `ambiguous`, and `contract_error` follow the fixed protocol. |
+| Audit → verification | affected confirmed, candidate, unresolved, and unaffected-target fixtures | Audit states remain audit data; confirmed blocks only affected target probes; candidate/unresolved block only affected E2E sign-off pending semantic review. |
+| Contract → snapshot | path, glob, external resource, and missing-surface fixtures | Only `snapshot: required` local surfaces are expanded; external/not-supported operations are not executed. |
+| Capability → item | unavailable, unknown, and available-plus-runtime-failure fixtures | Availability is retained independently from target result; only Contract-defined handoffs appear. |
+| Probe → report | MCP, Skill, CLI/Service, and Plugin/Hook/custom fixtures | `run-target-probes.sh` emits the fixed JSON shape; P1 support boundaries are respected. |
+| Handoff definition → execution record | defined and absent `handoff_id` fixtures | Contract owns definition; report holds execution; undefined handoffs are never invented. |
+| CLI/output → consumer | stdout JSON, `--report`, malformed arguments, and target-internal report fixtures | stdout stays backward compatible; Markdown report is external; exits follow the design policy. |
 
 ---
 
-## Integration Test Commands
+## Integration Test Matrix
 
-Run from repository root:
+| Scenario | Preconditions | Automated procedure | Expected result |
+|---|---|---|---|
+| Simple repository | No trigger and no Contract | Run existing `verify-setup.sh <repo>` fixture | Existing JSON keys and behavior are unchanged; no Contract is created. |
+| Contract discovery | Explicit, declared, marker-scan, ambiguous, and malformed fixtures | Run `audit-contract.sh` per fixture | Exact discovery status and source; no prose inference. |
+| Static disconnect | Contract has missing generated-config key for target A | Run audit then verification | Audit emits target-A `confirmed`; target A is `audit_blocked`; target B can proceed. |
+| Unresolved static wiring | Dynamic consumer fixture for target A | Run audit then verification | `unresolved` remains audit data; target A E2E is `not_verified` until semantic review. |
+| Capability unavailable | Valid MCP contract but no safe runtime mechanism | Run verification fixture | Capability is `unavailable`; item is `not_verified`; applicable Contract handoff is recorded. |
+| Runtime failure | Safe MCP probe mechanism, initialize returns error | Run verification fixture | Capability remains `available`; item is `not_verified` with `runtime_failure`; exit 4. |
+| MCP P1 chain | Stdio fixture supports initialize, tools/list, safe tool call | Run target probe for all three phases | Each phase yields evidence; target E2E is derived from items. |
+| Skill P1 chain | Observable agent discovery/activation fixture | Run discovery and activation probes | Statuses remain separate; unavailable activation is not success. |
+| Generic P1 boundary | CLI/Service read-only fixture and Plugin/Hook/custom fixture | Run probes | CLI/Service command probe runs read-only; unsupported types return only defined handoff. |
+| Pristine dry-run | Git fixture without `.agent-setup` | Run `verify-setup.sh --dry-run`; inspect existence and Git status | No cache or tracked/untracked mutation; only known read-only commands execute. |
+| Dry-run violation | Approved ephemeral fixture writes a tracked file | Run dry-run verification | `dry_run_invariant_violation`, cleanup, and exit 1. |
+| Report destination | Valid target with external and internal report paths | Run with each `--report` path | External report works while stdout remains JSON; internal path is exit 2 in dry-run. |
+| Dependency unavailable | PATH fixture without importable PyYAML | Run audit and verification | No install attempt; exit 3 and provisioning handoff. |
+
+---
+
+## Acceptance Criteria Mapping
+
+| # | Criterion | Concrete verification |
+|---|---|---|
+| 1 | Complex setup exposes a Setup Contract | Valid complex fixture parsed by `audit-contract.sh`. |
+| 2 | Triggers include representative and unknown-equivalent cases | `analyze-repo.sh` fixture asserts evidence-only trigger shape; `SKILL.md` procedure documents Agent override. |
+| 3 | Chosen configuration reaches consumer/activation | Branch-layer fixture verifies `env`, `cli`, generated config, and runtime consumer locators. |
+| 4 | Unchosen public branches are audited | Multi-branch fixture asserts every declared branch is scanned. |
+| 5 | Artifact placement alone is not E2E success | Report fixture requires a verified representative-operation item. |
+| 6 | Target-specific representative operation is in Contract | Schema fixture rejects required item without a `probe`. |
+| 7 | Skill install, discovery, activation are separate | Skill fixture asserts three independent item statuses. |
+| 8 | Observable Skill activation is verified | Observable `agent_action: activation` fixture returns evidence. |
+| 9 | Unobservable Skill activation is not verified | Capability-unknown fixture keeps discovery and activation separate. |
+| 10 | MCP includes initialize, discovery, and possible tool call | Stdio MCP fixture exercises the three P1 phases. |
+| 11 | Generic targets reach their supported boundary | CLI/Service read-only fixture and unsupported-type handoff fixture. |
+| 12 | Unsafe E2E is not success | unavailable/unknown capability fixtures produce `not_verified`. |
+| 13 | Implementation and verification completion are distinct | Markdown report fixture asserts distinct sections. |
+| 14 | Major verification statuses are retained | Multi-item report fixture asserts every item `status`. |
+| 15 | Unverified items carry actionable evidence | Defined-handoff fixture asserts reason, next step, required evidence, and applicable handoff only. |
+| 16 | Dry-run makes no persistent mutation | Pristine dry-run fixture checks `.agent-setup` absence and Git status. |
+| 17 | Dry-run skips installation/registration | `npm install` and registration command fixtures are `not_executed`. |
+| 18 | Canonical source supports mutable/immutable references | Schema fixtures validate `canonical_source.ref_mode` and `ref` rules. |
+| 19 | Matrix separates install/discovery/activation | Matrix reference assertions cover the three capability names. |
+| 20 | Repository gaps can be classified | Audit fixture asserts bootstrap/configuration/runtime classifications in `next_actions`. |
+| 21 | Behavior changes have fail-first evidence | Each behavior task records RED command/failure and GREEN command/success in both plans; implementation log attaches outputs. |
+| 22 | Unautomatable exceptions are explicit | Unsupported target fixture records not-verified status and Contract-defined handoff. |
+| 23 | Repository policy overrides generic defaults | Explicit and declared discovery fixtures beat marker scanning. |
+| 24 | Existing setup remains intact | Simple-repository regression fixture and audit read-only assertion. |
+| 25 | Semantic backward compatibility remains | Default stdout JSON regression fixture retains existing keys. |
+| 26 | Simple repositories avoid heavyweight verification | Empty-trigger fixture follows the unchanged standard workflow. |
+| 27 | P2 does not expand | Baseline-delta eval scope guard succeeds. |
+
+---
+
+## Final Commands
+
+Run from repository root after both plans complete:
 
 ```bash
-# 1. Validate all skill metadata
 node scripts/validate-skills.js
-
-# 2. Run all agent-driven-setup script tests
+python3 -m pip install -r skills/agent-driven-setup/requirements.txt
 bash skills/agent-driven-setup/scripts/test-scripts.sh
-
-# 3. Verify no unintended files changed
+git diff --name-only "$IMPLEMENTATION_BASE_SHA"...HEAD
+git diff --stat "$IMPLEMENTATION_BASE_SHA"...HEAD
 git status --short
-
-# 4. Check for P2 scope creep
-git diff --name-only | grep -E 'evals/evals\.json|eval.*\.json' && echo "FAIL: P2 scope detected" || echo "OK: no eval expansion"
 ```
 
----
+The dependency-install command provisions the CI or caller environment only. It must not run inside, or install into, a target repository under test.
 
 ## Sign-Off Definition
 
-Integration checkpoint passes when:
+Integration passes only when all conditions are met:
 
-1. `node scripts/validate-skills.js` returns 0 errors, 0 warnings.
-2. `bash skills/agent-driven-setup/scripts/test-scripts.sh` passes.
-3. YAML parser dependency (PyYAML) is documented and available in the test/execution environment used by the integration tests.
-4. At least one non-MCP target scenario (Skill is recommended) demonstrates separated statuses: `install: verified`, `discovery: verified`, `activation: not_verified`, with a corresponding handoff.
-5. All acceptance criteria in the mapping above have at least one corresponding test or documented procedure.
-6. No `evals.json` or eval-case files are modified.
-7. No new AI agent config files (`.opencode/`, `opencode.json(c)`, etc.) are created.
-8. `git diff --stat` shows only intended files in `skills/agent-driven-setup/`.
+1. `node scripts/validate-skills.js` returns 0 errors and 0 warnings.
+2. PyYAML `>=6.0,<7` is available in the caller or ephemeral CI environment; neither script installed it.
+3. `bash skills/agent-driven-setup/scripts/test-scripts.sh` passes every matrix scenario.
+4. Every acceptance criterion has the mapped automated fixture or the mapped documented procedure and retained execution evidence.
+5. The baseline-to-HEAD delta contains only allowed implementation paths and no P2 eval path.
+6. `git status --short` is empty, apart from explicitly documented final evidence artifacts outside the repository.
+7. No new AI agent config file is created.

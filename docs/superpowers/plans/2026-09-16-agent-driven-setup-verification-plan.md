@@ -1,22 +1,23 @@
-# Agent-driven Setup — Spec 2: Capability & Verification Execution Implementation Plan
+# Agent-driven Setup — Spec 2: Capability and Verification Execution Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Extend `skills/agent-driven-setup/` with setup-specific capability matrix, target-specific E2E verification, dry-run safety classifier, scoped snapshot, and handoff/evidence lifecycle.
+**Goal:** Add safe, contract-driven capability assessment and target-specific verification while preserving the existing verification-plan stdout interface.
 
-**Architecture:** A new `setup-capability-matrix.md` defines setup-specific capabilities as layers above generic capabilities. `verify-setup.sh` is extended with a dry-run mode that only executes known-safe operations and compares before/after snapshots of expected mutation surfaces. Verification reports record per-item status, capability assessment, and handoff execution without collapsing handoff completion into verification success.
+**Architecture:** `verify-setup.sh` is the sole orchestrator. It owns CLI parsing, temporary analysis, audit gates, capability assessment, report generation, and exit codes. `run-target-probes.sh` is the only target-operation executor and returns one fixed JSON result. Both consume Setup Contract v1 and PyYAML without installing dependencies or writing to the target during dry-run.
 
-**Tech Stack:** Bash, Python 3 with PyYAML (shared Setup Contract parsing dependency), Markdown, YAML frontmatter.
+**Tech Stack:** Bash 4+, Python 3, PyYAML `>=6.0,<7`, JSON, YAML frontmatter, Markdown.
 
 ## Global Constraints
 
-- P0 + P1 only; P2 eval suite expansion is out of scope.
-- `setup-capability-matrix.md` must not redefine generic capability availability; it references `agent-capability-matrix.md` as a prerequisite source.
-- Dry-run must not mutate persistent state in repository, user settings, system/global config, Agent Skill directory, Plugin registry, or external services.
-- Unknown side-effect commands are `not_executed` during dry-run, never executed speculatively.
-- Handoff completion does not automatically mark a verification item as `verified`; evidence must be evaluated against `required_evidence`.
-- E2E status is derived from individual verification items (`required_for_e2e`), not a separate truth.
-- No absolute paths specific to a user or machine may be committed.
+- P0 and P1 only. Do not modify `evals/evals.json` or eval cases.
+- Use the Setup Contract v1 schema, discovery protocol, CLI grammar, and error policy from the design without deviation.
+- PyYAML is runtime-provisioned by the caller/CI; scripts preflight it and never install it.
+- `verify-setup.sh --dry-run` never writes to the target repository, including `.agent-setup`.
+- `--report` paths and every temporary artifact are outside the target repository in dry-run.
+- Capability availability and target verification result are separate report fields.
+- Only Contract-defined handoffs may be emitted.
+- Preserve existing stdout JSON keys: `commands`, `notes`, and `makefile_targets`.
 
 ---
 
@@ -24,533 +25,247 @@
 
 | File | Responsibility |
 |---|---|
-| `skills/agent-driven-setup/references/setup-capability-matrix.md` | Defines setup-specific capabilities, generic-prerequisite candidates, and target-type default profiles. |
-| `skills/agent-driven-setup/references/agent-capability-matrix.md` | Adds prerequisite mapping from setup-specific capabilities; keeps generic availability as source of truth. |
-| `skills/agent-driven-setup/references/verification-patterns.md` | Adds target-specific verification, dry-run invariant, and handoff/evidence lifecycle sections. |
-| `skills/agent-driven-setup/references/agent-protocol-template.md` | Adds verification phase and handoff pattern language to generated protocols. |
-| `skills/agent-driven-setup/references/human-entry-point-template.md` | Adds E2E verified/unverified reporting language to README paste prompt guidance. |
-| `skills/agent-driven-setup/scripts/verify-setup.sh` | Adds `--dry-run` mode, conservative command classifier, scoped before/after snapshot, dry-run invariant violation report. |
-| `skills/agent-driven-setup/scripts/test-scripts.sh` | Adds tests for dry-run classifier, snapshot behavior, and verification report shape. |
-| `skills/agent-driven-setup/SKILL.md` | Adds verification execution, handoff, and reporting sections. |
+| `skills/agent-driven-setup/scripts/verify-setup.sh` | Orchestrator, CLI, dry-run plan, temporary cache, audit gate, assessment, report, exit code. |
+| `skills/agent-driven-setup/scripts/run-target-probes.sh` | Sole executor of allowed target probes and their cleanup. |
+| `skills/agent-driven-setup/scripts/test-scripts.sh` | Regression fixtures for all behavior-changing paths. |
+| `skills/agent-driven-setup/references/setup-capability-matrix.md` | Capability definitions and P1 profile boundaries. |
+| `skills/agent-driven-setup/references/agent-capability-matrix.md` | Generic prerequisite cross-reference only. |
+| `skills/agent-driven-setup/references/verification-patterns.md` | Normative user-facing dry-run, report, and handoff guidance. |
+| `skills/agent-driven-setup/references/agent-protocol-template.md` | Generated protocol wording for report and handoff lifecycle. |
+| `skills/agent-driven-setup/references/human-entry-point-template.md` | Human-facing separation of implementation and verification completion. |
+| `skills/agent-driven-setup/SKILL.md` | Workflow instructions that invoke the fixed components. |
 
 ---
 
-### Task 1: Create `setup-capability-matrix.md` reference
+### Task 1: Publish the capability and verification references
 
 **Files:**
 - Create: `skills/agent-driven-setup/references/setup-capability-matrix.md`
-- Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
-
-**Interfaces:**
-- Produces: reference document with capability definitions and default profiles.
-- Consumes: generic capability names from `agent-capability-matrix.md`.
-
-- [ ] **Step 1: Write capability definitions**
-
-Create `skills/agent-driven-setup/references/setup-capability-matrix.md` with setup-specific capabilities:
-
-- `target_installation`
-- `target_registration`
-- `agent_discovery_probe`
-- `representative_activation_probe`
-- `mcp_runtime_probe`
-- `mcp_client_registration`
-- `client_reload_new_session`
-- `hook_registration`
-- `external_health_check`
-- `artifact_secret_lifecycle`
-
-For each capability:
-- `description`
-- `generic_prerequisites.candidates` (list, not AND condition)
-- `note` clarifying that availability is determined by concrete probe, not prerequisite AND
-
-- [ ] **Step 2: Write default profiles**
-
-For target types `skill`, `mcp`, `plugin`, `hook`, `cli`, `service`, `other/custom`, list `commonly_used` capabilities. Do not use `required`/`optional`; these are hints only. Final requirement comes from Setup Contract.
-
-- [ ] **Step 3: Add a test verifying frontmatter parseability**
-
-If the document contains an example frontmatter block, parse it and assert `setup_capability_matrix_version` is present.
-
-- [ ] **Step 4: Run tests**
-
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add skills/agent-driven-setup/references/setup-capability-matrix.md
-git commit -m "docs: add setup-specific capability matrix reference"
-```
-
----
-
-### Task 2: Update `agent-capability-matrix.md` with prerequisite mapping
-
-**Files:**
 - Modify: `skills/agent-driven-setup/references/agent-capability-matrix.md`
-- Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
-
-**Interfaces:**
-- Produces: updated matrix that references setup-specific capabilities but does not redefine their availability.
-
-- [ ] **Step 1: Add a "Setup-specific capabilities that depend on these" section**
-
-Append a section listing, for each generic capability, which setup-specific capabilities typically use it as a prerequisite candidate. Keep generic capability definitions and platform mapping unchanged.
-
-- [ ] **Step 2: Add test**
-
-Test that the new section header exists.
-
-- [ ] **Step 3: Run tests**
-
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
-
-Expected: PASS.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add skills/agent-driven-setup/references/agent-capability-matrix.md
-git commit -m "docs: link generic capabilities to setup-specific prerequisites"
-```
-
----
-
-### Task 3: Update `verification-patterns.md`
-
-**Files:**
 - Modify: `skills/agent-driven-setup/references/verification-patterns.md`
+- Modify: `skills/agent-driven-setup/scripts/test-scripts.sh`
 - Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
 
-**Interfaces:**
-- Produces: extended verification patterns covering target-specific E2E, dry-run invariant, and handoff lifecycle.
+**Depends on:** Spec 1 Tasks 1 through 3.
 
-- [ ] **Step 1: Add target-specific E2E section**
+**Consumes:** Setup Contract v1 `required_capabilities`, probe discriminators, mutation surfaces, and P0/P1 scope.
 
-Document conceptual chains:
-- Skill: install/register → agent discovery → representative activation
-- MCP: runtime start → initialize → tool discovery → representative tool call
-- Plugin/Hook/CLI/Service: generic chain from Setup Contract
+**Produces:** capability vocabulary, target default profiles, and documentation-only verification rules.
 
-Representative operation must be safe, read-only where possible, and selected from Setup Contract.
+**Interfaces:** capability status is exactly `available`, `unavailable`, or `unknown`; P1 supports MCP stdio, Skill agent actions, and read-only CLI/Service commands; Plugin, Hook, and `other/custom` return Contract-defined handoff without invented probes.
 
-- [ ] **Step 2: Add dry-run invariant section**
+**RED:**
+- [ ] Add documentation assertions for `mcp_runtime_probe`, `agent_discovery_probe`, `representative_activation_probe`, `available | unavailable | unknown`, target-operation separation, and `unknown → not_verified`.
+- [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh`.
+- [ ] Confirm the assertions fail before the reference material exists.
 
-Document:
-- 3-layer defense: policy, classifier, snapshot.
-- `unknown → not_executed` rule.
-- ephemeral operation requirements: pre-defined cleanup + mutation surface + post-execution snapshot.
-- snapshot targets derived from Setup Contract `external_effects.mutation_surfaces`.
+**GREEN:**
+- [ ] Define every setup-specific capability with `description`, `generic_prerequisites.candidates`, and the rule that prerequisites do not derive availability.
+- [ ] Add the P1 target profiles and exact dry-run/report/handoff rules.
+- [ ] Run the suite and confirm the documentation assertions pass.
 
-- [ ] **Step 3: Add handoff/evidence lifecycle section**
+**REFACTOR:**
+- [ ] Remove duplicated capability descriptions without changing the canonical matrix; rerun the suite.
 
-Document:
-- Contract defines handoff; Verification Report records execution.
-- handoff completed → evidence acquired → evaluate against `required_evidence` → `evaluation_result` → item status.
-- evidence is summary/reference, not full transcript.
-- secret-bearing evidence handled by `artifact_secret_lifecycle`.
+**Commit:**
+- [ ] Stage only the three reference documents and `test-scripts.sh`.
+- [ ] Commit: `docs: setup検証capability matrixを追加`.
 
-- [ ] **Step 4: Add test**
-
-Verify new section headers exist.
-
-- [ ] **Step 5: Run tests**
-
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
-
-Expected: PASS.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add skills/agent-driven-setup/references/verification-patterns.md
-git commit -m "docs: add target-specific E2E, dry-run, and handoff verification patterns"
-```
-
----
-
-### Task 4: Update `agent-protocol-template.md`
-
-**Files:**
-- Modify: `skills/agent-driven-setup/references/agent-protocol-template.md`
-- Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
-
-**Interfaces:**
-- Produces: template that includes target-specific verification phase and handoff patterns.
-
-- [ ] **Step 1: Extend required elements**
-
-Add:
-- Representative operation / smoke test description.
-- Handoff pattern for steps the agent cannot autonomously complete.
-- Capability contract may include setup-specific capabilities when the repository is complex.
-
-- [ ] **Step 2: Update minimal protocol section**
-
-Add optional sentences for verification and handoff in the template snippet.
-
-- [ ] **Step 3: Add test**
-
-Verify updated elements are present.
-
-- [ ] **Step 4: Run tests**
-
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add skills/agent-driven-setup/references/agent-protocol-template.md
-git commit -m "docs: extend agent protocol template for target-specific verification"
-```
-
----
-
-### Task 5: Update `human-entry-point-template.md`
-
-**Files:**
-- Modify: `skills/agent-driven-setup/references/human-entry-point-template.md`
-- Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
-
-**Interfaces:**
-- Produces: template guidance that includes E2E status reporting.
-
-- [ ] **Step 1: Add E2E reporting note**
-
-Add guidance that the final report must distinguish implementation completion from verification completion and list unverified items with handoff instructions.
-
-- [ ] **Step 2: Add test**
-
-Verify the note exists.
-
-- [ ] **Step 3: Run tests**
-
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
-
-Expected: PASS.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add skills/agent-driven-setup/references/human-entry-point-template.md
-git commit -m "docs: add E2E status reporting guidance to human entry point template"
-```
-
----
-
-### Task 6: Extend `verify-setup.sh` with dry-run classifier and scoped snapshot
+### Task 2: Add CLI parsing, dependency preflight, and dry-run I/O safety
 
 **Files:**
 - Modify: `skills/agent-driven-setup/scripts/verify-setup.sh`
 - Modify: `skills/agent-driven-setup/scripts/test-scripts.sh`
+- Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
 
-**Interfaces:**
-- Consumes: `--dry-run` flag, existing `analyze.json`, optional Setup Contract.
-- Produces: verification plan with `safe`/`review`/`not_executed` categories; dry-run invariant report.
+**Depends on:** Spec 1 Tasks 1 and 2; Task 1.
 
-- [ ] **Step 1: Add `--dry-run` argument parsing**
+**Consumes:** `verify-setup.sh [--dry-run] [--contract <repo-relative-path>] [--report <target-external-markdown-path>] <repo-path>`, Setup Contract discovery, and mutation-surface semantics.
 
-Add `--dry-run` boolean flag. When set, change classifier behavior.
+**Produces:** additive dry-run object with `dry_run.decision: execute|not_executed`, external temporary cache, before/after snapshot, and exit codes 1 through 3.
 
-- [ ] **Step 2: Implement dry-run command classifier**
+**Interfaces:** normal `category` remains `safe|review`; dry-run never uses `safe` or `review` as its decision; malformed grammar/Contract is exit 2 and missing PyYAML is exit 3 with no install attempt.
 
-In dry-run mode:
-- `read-only` / known-safe → `execute`
-- known-mutating (install, publish, apply, deploy, push, etc.) → `not_executed`
-- unknown → `not_executed`
+**RED:**
+- [ ] Add a pristine Git fixture without `.agent-setup`; invoke `verify-setup.sh --dry-run <repo>` and assert `test ! -e "$repo/.agent-setup"` and empty `git -C "$repo" status --porcelain`.
+- [ ] Add fixtures asserting `node --version` and `git status --porcelain` are `dry_run.decision == "execute"`, while `npm install` and `unknown-command --check` are `"not_executed"`.
+- [ ] Add a target-internal `--report` fixture and a missing-PyYAML PATH fixture.
+- [ ] Run the suite and confirm failure because the current script writes `.agent-setup` before classification and has no new grammar.
 
-Normal mode retains existing `safe`/`review` categories.
+**GREEN:**
+- [ ] Parse all options before one required repository path and preserve default stdout JSON.
+- [ ] Before any target write, preflight PyYAML, discover/read the Contract, create target-external temporary storage, and take the before snapshot.
+- [ ] In dry-run, analyze through the external temporary cache; never create or update the target `.agent-setup` cache.
+- [ ] Classify only known read-only commands as `execute`; suppress mutating and unknown commands as `not_executed`; emit invariant violation and exit 1 on snapshot or cleanup failure.
+- [ ] Reject target-internal report paths in dry-run and emit exit 2; report missing PyYAML as exit 3 with an explicit provisioning handoff.
+- [ ] Run the suite and confirm every added fixture passes.
 
-`not_executed` entries include `reason`.
+**REFACTOR:**
+- [ ] Centralize target-external path validation if report, cache, evidence, and snapshot checks duplicate it; rerun the suite.
 
-- [ ] **Step 3: Implement scoped snapshot**
+**Commit:**
+- [ ] Stage only `verify-setup.sh` and `test-scripts.sh`.
+- [ ] Commit: `feat: dry-runのI/O不変条件を保証`.
 
-When `--dry-run` is set:
-1. Compute expected mutation surfaces from Setup Contract `external_effects.mutation_surfaces`. If the contract is absent, use only the repository working tree and any surfaces explicitly declared by repository evidence (`AGENTS.md`, CI, installer docs).
-2. Do not add blanket default snapshots of `$HOME/.claude/`, `$HOME/.opencode/`, or other Agent-global directories unless explicitly named by the contract or repository evidence.
-3. Record metadata (path, mtime, size, hash) into a temporary directory.
-4. Execute only `execute` classified commands.
-5. Record after snapshot.
-6. Compare and report `dry_run_invariant_violation` if unexpected mutations exist.
-7. Clean up temporary snapshot directory.
-
-Do not snapshot the whole home directory; use concrete surfaces only.
-
-- [ ] **Step 4: Emit dry-run invariant report**
-
-Add to verification plan JSON:
-
-```json
-{
-  "dry_run": {
-    "enabled": true,
-    "snapshot_status": "clean | violation",
-    "violations": []
-  }
-}
-```
-
-- [ ] **Step 5: Add tests**
-
-Create fixtures and assert:
-1. `node --version` is `execute` in dry-run.
-2. `git status --porcelain` is `execute` in dry-run.
-3. `npm install` is `not_executed` in dry-run.
-4. Unknown command is `not_executed` in dry-run.
-5. Repository test commands (e.g., `npm test`) are only `execute` when repository evidence explicitly marks them read-only or they are covered by a safe allowlist; otherwise `review` in normal mode and `not_executed` in dry-run.
-6. A read-only / pre-approved ephemeral test operation that is classified as safe but unexpectedly mutates a tracked file is detected by snapshot comparison and reported as `dry_run_invariant_violation`.
-- [ ] **Step 6: Run tests**
-
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
-
-Expected: PASS.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add skills/agent-driven-setup/scripts/verify-setup.sh
-git commit -m "feat: add dry-run classifier and scoped snapshot to verify-setup.sh"
-```
-
----
-
-### Task 7: Verification report generation
+### Task 3: Add fixed Verification Report generation and audit gates
 
 **Files:**
-- Create or extend a verification report helper in `skills/agent-driven-setup/scripts/verify-setup.sh` or a small companion script.
+- Modify: `skills/agent-driven-setup/scripts/verify-setup.sh`
 - Modify: `skills/agent-driven-setup/scripts/test-scripts.sh`
+- Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
 
-**Interfaces:**
-- Consumes: Setup Contract `verification` definition, capability assessment, handoff records.
-- Produces: Verification Report YAML frontmatter + Markdown.
+**Depends on:** Spec 1 Task 3; Task 2.
 
-- [ ] **Step 1: Define verification report schema**
+**Consumes:** Audit Report `affected_target_ids`, Contract `verification.targets`, `required_for_e2e`, `handoffs`, and `--report`.
 
-Use schema version `verification_report_schema_version: 1`.
+**Produces:** Markdown Verification Report at `--report`, additive `verification_report` data in stdout JSON, and deterministic exit 0 or 4.
 
-Fields:
-- `generated_at`
-- `targets[*].target_type`
-- `targets[*].e2e_status` + `e2e_status_reason`
-- `targets[*].items[*].id`, `status`, `reason`, `handoff_id`, `next_step`, `required_evidence`
-- `capability_assessment` map with `status: available | unavailable | unknown`, `reason`, `evidence`
-- `handoffs` execution records with `status`, `evaluation_result`, `evidence`
+**Interfaces:** default stdout remains the legacy plan JSON; report contains `generated_at`, targets/items, capability assessment, handoff execution records, dry-run result, and `overall_status`; `confirmed`/`candidate`/`unresolved` never directly overwrite item status.
 
-- [ ] **Step 2: Implement report generation in verify-setup.sh**
+**RED:**
+- [ ] Add fixtures for all required items verified, one runtime failure, a confirmed affected audit finding, an unresolved affected finding, and an unaffected second target.
+- [ ] Run the suite and confirm failure because no report path exists, E2E status is absent, and audit findings are not target-scoped.
 
-After executing safe verification steps and assessing capabilities, generate the report to stdout or a path specified by `--report <path>`.
+**GREEN:**
+- [ ] Render the report only to `--report`; keep stdout JSON parseable and backward-compatible.
+- [ ] Derive `not_applicable`, `verified`, and `not_verified` exclusively from required item statuses.
+- [ ] Block probes for schema errors or affected `confirmed` findings, record `audit_blocked`, and exit 4.
+- [ ] Permit unaffected targets to continue; keep candidate/unresolved findings as review records but force only the affected target's E2E sign-off to `not_verified` until resolved.
+- [ ] Run the suite and confirm report shape, stdout keys, target isolation, and exit status.
 
-- [ ] **Step 3: Implement E2E status derivation**
+**REFACTOR:**
+- [ ] Extract report serialization only if stdout and Markdown report disagree on an item status; rerun the suite.
 
-Algorithm:
-1. For each target, collect items where `required_for_e2e` is true and status is not `not_applicable`.
-2. If none, `e2e_status = not_applicable`.
-3. If all are `verified`, `e2e_status = verified`.
-4. Otherwise, `e2e_status = not_verified` with reason listing unverified required items.
+**Commit:**
+- [ ] Stage only `verify-setup.sh` and `test-scripts.sh`.
+- [ ] Commit: `feat: 監査ゲート付きVerification Reportを生成`.
 
-- [ ] **Step 4: Add tests**
-
-Test fixtures with:
-1. All required items verified → `e2e_status: verified`.
-2. One required item not_verified → `e2e_status: not_verified`.
-3. Only optional items → `e2e_status: not_applicable`.
-
-- [ ] **Step 5: Run tests**
-
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
-
-Expected: PASS.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add skills/agent-driven-setup/scripts/verify-setup.sh
-git commit -m "feat: generate verification report with E2E status derivation"
-```
-
----
-
-### Task 8: Capability assessment helper
+### Task 4: Implement capability assessment in the orchestrator
 
 **Files:**
-- Modify: `skills/agent-driven-setup/scripts/verify-setup.sh` or create `skills/agent-driven-setup/scripts/assess-capabilities.sh`.
+- Modify: `skills/agent-driven-setup/scripts/verify-setup.sh`
+- Modify: `skills/agent-driven-setup/scripts/test-scripts.sh`
+- Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
 
-**Interfaces:**
-- Consumes: list of `required_capabilities` from Setup Contract.
-- Produces: `capability_assessment` map.
+**Depends on:** Tasks 1 through 3.
 
-- [ ] **Step 1: Implement concrete probes**
+**Consumes:** Contract `required_capabilities`, capability matrix definitions, and audit gate results.
 
-For each setup-specific capability, determine whether the current Agent/environment can **perform and observe the corresponding verification operation**, independent of whether the target itself passes or fails that operation. Return `available | unavailable | unknown` based on evidence about the environment, not the target state.
+**Produces:** `capability_assessment.<capability> = {status, reason, evidence}` and per-item decision data.
 
-```text
-Capability assessment: Can this Agent/environment perform and observe the verification operation?
-Verification: Did the target pass that operation?
-```
+**Interfaces:** only `verify-setup.sh` owns assessment; an available capability plus target failure remains `available`; unavailable/unknown capability yields `not_verified` and only its referenced `handoff_id` may be emitted.
 
-- `target_installation`: `available` only if the script can safely attempt a no-op placement check without mutation. Otherwise `unknown`.
-- `target_registration`: `available` only if the script can safely read the target registry without writing. Otherwise `unknown`.
-- `agent_discovery_probe`: `available` if the discovery path can be read and the mechanism is observable; `unknown` if dynamic or unobservable.
-- `representative_activation_probe`: `available` only after the environment proves it can invoke and observe a representative activation operation; otherwise `unknown`.
-- `mcp_runtime_probe`: `available` only if the Agent/environment has a safe mechanism to launch, terminate, and observe the declared MCP runtime/transport. Whether that runtime successfully initializes is a verification result, not a capability-assessment result. If a safe probe mechanism is not available, `unknown`.
-- `mcp_client_registration`: `available` only if the exact target client config path is known and the Agent/environment can perform the registration operation non-destructively. If the path is unknown or the operation cannot be safely observed, `unknown`.
-- `client_reload_new_session`: `available` only if the current Agent/environment can actually control and observe the required client reload or new-session lifecycle. If the operation is known to require an external actor, `unavailable`; if control/observability cannot be established, `unknown`.
-- `hook_registration`: `available` only if a safe read-only hook probe is possible; otherwise `unknown`.
-- `external_health_check`: `available` if the Agent can issue a read-only request to the declared health endpoint and observe the response. A `500` response from the target does **not** make the capability `unavailable`; it makes the corresponding verification item fail.
-- `artifact_secret_lifecycle`: `available` only if safe input, storage, commit prevention, redaction, and cleanup can all be satisfied in this environment. Otherwise `unknown`.
+**RED:**
+- [ ] Add fixtures for unavailable `mcp_runtime_probe`, unknown Skill activation capability, available MCP runtime with initialize failure, and an item without `handoff_id`.
+- [ ] Run the suite and confirm failure because assessment and target result are not separate fields.
 
+**GREEN:**
+- [ ] Implement concrete, non-mutating environment/observability checks for each P1 capability.
+- [ ] Record one of the three exact statuses with evidence and reason.
+- [ ] Mark dependent items `not_verified` on unavailable or unknown capability; omit a handoff when the Contract has none.
+- [ ] Preserve `available` when the later target probe fails.
+- [ ] Run the suite and confirm the four result combinations and exit 4 behavior.
 
-- [ ] **Step 2: Record status, reason, evidence**
+**REFACTOR:**
+- [ ] Normalize repeated capability-result construction without hiding capability-specific evidence; rerun the suite.
 
-Each capability returns `available | unavailable | unknown` with a human-readable reason and optional evidence list.
+**Commit:**
+- [ ] Stage only `verify-setup.sh` and `test-scripts.sh`.
+- [ ] Commit: `feat: setup capability評価を追加`.
 
-- [ ] **Step 3: Add tests**
-
-Test that capability status correctly drives verification decisions without conflating capability availability and target failure:
-1. `unavailable` capability → dependent verification item is `not_verified` with handoff.
-2. `unknown` capability → dependent verification item is `not_verified` with handoff.
-3. `available` capability + target operation failure (e.g., MCP initialize error) → capability stays `available`; dependent verification item is `not_verified` with runtime failure reason.
-
-- [ ] **Step 4: Run tests**
-
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add skills/agent-driven-setup/scripts/verify-setup.sh
-git commit -m "feat: add setup-specific capability assessment probes"
-```
-
----
-
-### Task 9: Update `SKILL.md` verification and handoff sections
+### Task 5: Implement the target-specific probe executor
 
 **Files:**
+- Create: `skills/agent-driven-setup/scripts/run-target-probes.sh`
+- Modify: `skills/agent-driven-setup/scripts/verify-setup.sh`
+- Modify: `skills/agent-driven-setup/scripts/test-scripts.sh`
+- Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
+
+**Depends on:** Tasks 2 through 4.
+
+**Consumes:** `run-target-probes.sh --contract <path> --target <target-id> --phase <phase> --evidence-dir <external-temp-dir>` and Contract `probe` definitions.
+
+**Produces:** one JSON object `{target_id, item_id, status, reason, evidence, error_category}` per invocation.
+
+**Interfaces:** executor exclusively owns process lifecycle, timeout, temporary fixture cleanup, and target operation execution; status is `verified|not_verified|not_applicable`; error category is `null|capability_unavailable|runtime_failure|audit_blocked|safety_blocked`.
+
+**RED:**
+- [ ] Add an MCP stdio fixture that answers initialize and tools/list, a fixture whose initialize returns an error, a safe representative tool fixture, a Skill discovery fixture, a CLI read-only command fixture, and a Plugin fixture with only a handoff.
+- [ ] Run the suite and confirm failure because the executor does not exist and no probe JSON can be parsed.
+
+**GREEN:**
+- [ ] Implement P1 MCP stdio JSON-RPC `initialize`, `tool_discovery`, and Contract-selected safe representative tool call with timeout and termination.
+- [ ] Implement Skill `agent_action` discovery/activation only through observable agent mechanisms; return `not_verified` when unavailable.
+- [ ] Implement read-only `command` probes for CLI/Service.
+- [ ] For Plugin, Hook, and `other/custom`, return `not_verified` with only a Contract-defined handoff; never invent a command or operation.
+- [ ] On cleanup failure return `safety_blocked`; on target operation error return `runtime_failure` without changing capability availability.
+- [ ] Run the suite and confirm every fixture emits one valid JSON result and leaves target fixtures unchanged.
+
+**REFACTOR:**
+- [ ] Extract transport-independent JSON result rendering if all probe types duplicate it; rerun the suite.
+
+**Commit:**
+- [ ] Stage only `run-target-probes.sh`, `verify-setup.sh`, and `test-scripts.sh`.
+- [ ] Commit: `feat: target別E2E probe executorを追加`.
+
+### Task 6: Update protocol, entry point, and skill workflow
+
+**Files:**
+- Modify: `skills/agent-driven-setup/references/agent-protocol-template.md`
+- Modify: `skills/agent-driven-setup/references/human-entry-point-template.md`
 - Modify: `skills/agent-driven-setup/SKILL.md`
+- Modify: `skills/agent-driven-setup/scripts/test-scripts.sh`
 - Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
 
-**Interfaces:**
-- Produces: SKILL.md sections for verification execution, capability assessment, and handoff reporting.
+**Depends on:** Tasks 1 through 5.
 
-- [ ] **Step 1: Add capability assessment step**
+**Consumes:** fixed orchestrator CLI, report schema, P1 support boundaries, and handoff semantics.
 
-After audit, add a step that maps Setup Contract `required_capabilities` to `setup-capability-matrix.md` and assesses availability using concrete probes. If a capability is `unavailable` or `unknown`, do not execute the dependent verification speculatively; mark the item `not_verified` and emit the applicable handoff. Only `available` capabilities may proceed to verification execution (subject to `blocked_by` and safety gates).
+**Produces:** documentation-only instructions that invoke exact components and report verified versus not-verified states.
 
-- [ ] **Step 2: Add verification execution step**
+**Interfaces:** Contract defines handoff; report records execution; Agent does not construct an undefined handoff; `blocked_by` skips dependent probes.
 
-Run target-specific E2E chains. For each phase:
-- Skip if `blocked_by` item is not `verified`.
-- If the required capability is `unavailable` or `unknown`, mark `not_verified` and emit handoff.
-- If the capability is `available` and the operation is safe, execute the representative operation.
-- Record evidence. If the target fails the operation (e.g., MCP initialize error, health check 500), the capability remains `available` and the verification item is marked `not_verified` with a runtime failure reason.
+**RED:**
+- [ ] Add documentation assertions for the fixed `verify-setup.sh` grammar, report destination, audit gate, capability/target distinction, and handoff applicability condition.
+- [ ] Run the suite and confirm these assertions fail before updates.
 
-- [ ] **Step 3: Add handoff generation step**
+**GREEN:**
+- [ ] Add the fixed workflow order: audit gate, capability assessment, dependency-aware probe execution, report, handoff.
+- [ ] State that implementation completion is distinct from verification completion and that unresolved affected audit findings prevent E2E sign-off.
+- [ ] Run the suite and confirm documentation assertions pass.
 
-For each `not_verified` item with a `handoff_id`, produce a handoff block with actor, action, prerequisites, expected outcome, required evidence. Add it to the verification report, not to the Setup Contract.
+**REFACTOR:**
+- [ ] Remove overlapping wording while retaining one canonical contract reference; rerun the suite.
 
-- [ ] **Step 4: Add final report section**
+**Commit:**
+- [ ] Stage only the three documentation files and `test-scripts.sh`.
+- [ ] Commit: `docs: verification実行とhandoff手順を同期`.
 
-Report must include:
-- implementation completion status
-- verification completion status (per target and item)
-- E2E status
-- unverified items with handoffs
-- dry-run invariant status
-- external effects and handoff map
-
-- [ ] **Step 5: Add tests**
-
-Verify new section headers exist.
-
-- [ ] **Step 6: Run tests**
-
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
-
-Expected: PASS.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add skills/agent-driven-setup/SKILL.md
-git commit -m "docs: add verification execution, capability assessment, and handoff sections to SKILL.md"
-```
-
----
-
-### Task 10: Final verification and integration readiness
+### Task 7: Verify Spec 2 integration readiness
 
 **Files:**
-- Read-only verification.
-- Test: `skills/agent-driven-setup/scripts/test-scripts.sh`
+- Create: none
+- Modify: none
+- Test: `skills/agent-driven-setup/scripts/test-scripts.sh`, `scripts/validate-skills.js`
 
-- [ ] **Step 1: Run full test suite**
+**Depends on:** Tasks 1 through 6.
 
-```bash
-bash skills/agent-driven-setup/scripts/test-scripts.sh
-```
+**Consumes:** all Spec 2 deliverables and the recorded implementation baseline SHA.
 
-Expected: PASS.
+**Produces:** integration-checkpoint evidence, not new implementation.
 
-- [ ] **Step 2: Run skill validation**
+**Interfaces:** validate the committed delta with `git diff --name-only "$IMPLEMENTATION_BASE_SHA"...HEAD` and the dirty state with `git status --short` separately.
 
-```bash
-node scripts/validate-skills.js
-```
+**RED:**
+- [ ] Not applicable: this is a read-only verification task.
 
-Expected: 0 errors, 0 warnings.
+**GREEN:**
+- [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh` and confirm success.
+- [ ] Run `node scripts/validate-skills.js` and confirm 0 errors and 0 warnings.
+- [ ] Run the baseline diff and confirm only the intended Spec 2 paths changed; separately confirm no eval path changed.
 
-- [ ] **Step 3: Inspect diff**
+**REFACTOR:**
+- [ ] Not applicable.
 
-```bash
-git diff --stat
-```
-
-Expected: only intended files changed.
-
-- [ ] **Step 4: Commit fixes if any**
-
-```bash
-git add ...
-git commit -m "fix: address Spec 2 review findings"
-```
-
----
-
-## Self-Review Checklist
-
-- [ ] `setup-capability-matrix.md` does not redefine generic capability availability.
-- [ ] Default profiles use `commonly_used`, not `required`/`optional`.
-- [ ] `verify-setup.sh --dry-run` only executes read-only or pre-approved ephemeral operations.
-- [ ] Unknown commands are `not_executed` during dry-run.
-- [ ] Snapshot targets come from concrete mutation surfaces, not whole home directory.
-- [ ] Capability assessment returns `available | unavailable | unknown` without deriving from prerequisites.
-- [ ] Verification report keeps `e2e_status` as a derived value.
-- [ ] Handoff completion and evidence evaluation are separated from verification item status.
-- [ ] No P2 eval expansion is included.
+**Commit:**
+- [ ] Do not create an empty commit; commit only required correction files with `fix: Spec 2統合検証の指摘を修正`.

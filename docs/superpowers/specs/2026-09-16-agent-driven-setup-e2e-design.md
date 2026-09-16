@@ -50,7 +50,7 @@ Issue #12 では、`agent-driven-setup` で ChronosGraph の setup framework を
 | レイヤー | 内容 | 担当 |
 |---|---|---|
 | **Setup Contract** | 期待される setup topology、required capabilities、handoff 定義 | Agent + `setup-contract-schema.md` |
-| **Audit Report** | observed static topology、discrepancy candidate | `audit-contract.sh` + Agent semantic review |
+| **Audit Report** | observed static topology、discrepancies | `audit-contract.sh` + Agent semantic review |
 | **Verification Report** | observed runtime result、capability availability、handoff 実行記録 | `verify-setup.sh` + target-specific probes |
 
 Setup Contract に runtime status は置かない。Verification definition は Contract に、status は Verification Report に置く。
@@ -73,16 +73,55 @@ setup_contract_schema_version: 1
 ...
 ```
 
-### frontmatter 主要フィールド
+### Setup Contract v1 規範 schema
 
-- `setup_intent`
-- `setup_target`: canonical source、runtime mode
-- `complexity_triggers`: 自動検出された trigger の evidence
-- `configuration_branches`: branch ごとの layer mapping
-- `installation` / `registration` / `discovery` / `activation`
-- `verification`: verification item 定義
-- `handoffs`: handoff 定義
-- `external_effects`: 外部副作用 scope + mutation surfaces
+YAML frontmatter は唯一の機械可読 contract である。本文は説明専用であり、監査・実行の入力として解釈しない。値が `null` の field は存在しない field と同じであり、required field に `null` は使用できない。すべての path は target repository root 基準の正規化済み相対 path とし、絶対 path、`..`、symbolic link を経由する repository 外への参照は schema error とする。
+
+| Top-level key | 必須 | 型 / cardinality | 規範的意味 |
+|---|---|---|---|
+| `setup_contract_schema_version` | はい | integer、値は `1` | schema version。ほかの値は schema error。 |
+| `setup_intent` | はい | non-empty string | setup の目的。機械的な分岐には使用しない。 |
+| `setup_target` | はい | stable target ID を key にする non-empty map | target の canonical source と runtime を定義する。 |
+| `complexity_triggers` | はい | list。空 list 可 | `{id, evidence, note}`。`id` は contract 内で一意。 |
+| `configuration_branches` | はい | non-empty list | `{id, layers}`。`id` は stable かつ一意。 |
+| `installation` / `registration` / `discovery` / `activation` | はい | target ID を key にする map。各値は list、空 list 可 | target phase ごとの静的 reference を定義する。 |
+| `verification` | はい | `{targets: map}` | verification item と probe 定義を保持する。 |
+| `handoffs` | はい | handoff ID を key にする map。空 map 可 | human/Agent/external actor へ渡す操作の定義。 |
+| `external_effects` | はい | `{mutation_surfaces: list}` | persistent mutation scope と snapshot 変換規則。 |
+
+`setup_target.<target_id>` は次の map である。`target_id` は `[a-z][a-z0-9_-]*` に一致し、contract 内の target reference はこの ID を使用する。
+
+| Field | 必須 | 型 / 値 | 意味 |
+|---|---|---|---|
+| `target_type` | はい | `skill`, `mcp`, `plugin`, `hook`, `cli`, `service`, `other/custom` | target-specific probe profile を選ぶ discriminator。 |
+| `canonical_source` | はい | `{kind, value, ref_mode, ref}` | `kind` は `repository_path`, `url`, `registry`, `external_resource`。`value` は kind に対応する canonical identifier。`ref_mode` は `immutable`, `mutable`, `not_applicable`。`ref` は `ref_mode` が `not_applicable` 以外なら必須、そうでなければ禁止。 |
+| `runtime` | はい | `{mode, command}` | `mode` は `process`, `in_process`, `agent_discovery`, `external_service`, `not_applicable`。`command` は `process` のときだけ必須の non-empty argv list、それ以外では禁止。 |
+
+`configuration_branches[*]` は `{id, layers}` である。`layers` は non-empty list であり、各 layer は stable かつ branch 内で一意な `id` と `kind` を持つ。`kind` は `choice`, `installer`, `cli`, `env`, `settings`, `generated_config`, `registration`, `discovery`, `runtime_consumer`, `activation`, `representative_operation`, `verification` のいずれかである。機械的な locator は `kind` ごとに次の shape を使う。
+
+| `kind` | 必須 field | 任意 field |
+|---|---|---|
+| `env` | `key` | `path` |
+| `cli` | `option` | `path` |
+| `generated_config` | `path`, `key` | なし |
+| `runtime_consumer` | `path`, `symbol` | なし |
+| 上記以外 | `path` | `key`, `symbol` |
+
+`path` は repository-relative path、`key` と `symbol` と `option` は non-empty string である。schema にない locator field は禁止する。これにより audit は layer の `kind` だけで検索規則を選択できる。
+
+`installation`、`registration`、`discovery`、`activation` の各 phase map は target ID を key とし、値の list 要素は `{id, reference, verification_item_id, handoff_id}` である。`reference` は `{kind: path, path, symbol?}` または `{kind: external_resource, value}` のいずれかである。`verification_item_id` と `handoff_id` は省略可能だが、指定時は同じ target の item と contract の handoff をそれぞれ参照しなければならない。
+
+`external_effects.mutation_surfaces[*]` は `{id, scope, kind, value, snapshot, cleanup_required}` である。`id` は一意、`scope` は `repository`, `user_local`, `global`, `external`、`kind` は `path`, `glob`, `external_resource`、`snapshot` は `required`, `not_supported`、`cleanup_required` は boolean とする。`repository` の `value` は repository-relative、`user_local` は `$HOME` relative、`global` は generic system identifier、`external` は external resource identifier である。`path` / `glob` かつ `snapshot: required` の surface は concrete path の metadata/hash list に展開する。`external_resource` と `snapshot: not_supported` は dry-run で実行できず、対応する operation は `not_executed` にする。
+
+### Contract discovery protocol
+
+Contract discovery は prose を推測しない。次の優先順位だけを実装する。
+
+1. `--contract <repo-relative-path>` が指定された場合、その正規化済み path の regular file を唯一の contract とする。存在しない、repository 外、frontmatter marker 不正なら `contract_error`。
+2. 指定がない場合、repository root の `AGENTS.md`、次に `README.md` を読む。各ファイルの独立した1行が `<!-- agent-setup-contract: path/to/contract.md -->` に完全一致するときだけ repository-declared marker とする。同じ優先ファイルに複数 marker、または両ファイルに異なる marker があれば `ambiguous`。
+3. marker がない場合、`SETUP-CONTRACT.md` と `docs/**/*.md` だけを候補にする。先頭行が `---` の YAML frontmatter に integer `setup_contract_schema_version: 1` を持つ file だけを marker-scan candidate とする。候補が1件なら `found` / `marker_scan`、0件なら `not_found`、2件以上なら `ambiguous` とする。
+
+発見結果は `{status, path, source}` であり、`status` は `found`, `not_found`, `ambiguous`, `contract_error`、`source` は `explicit`, `repository_declared`, `marker_scan`, `none` のいずれかである。`path` は `found` のときだけ存在する。
 
 ### verification item 定義
 
@@ -90,6 +129,7 @@ setup_contract_schema_version: 1
 verification:
   targets:
     mcp_main:
+      target_type: mcp
       items:
         - id: mcp.initialize
           phase: initialize
@@ -99,10 +139,16 @@ verification:
             - mcp_runtime_probe
           blocked_by: []
           handoff_id: verify-mcp-initialize
+          probe:
+            kind: mcp_request
+            request: initialize
 ```
 
-- `id` は stable な一意値。命名規則は推奨するが、`branch`/`phase`/`target_type` は別フィールド。
-- `blocked_by` は原因となる verification item ID 参照。
+- `verification.targets` の key は `setup_target` の target ID と一致する。各 target の `target_type` は `setup_target.<target_id>.target_type` と一致する。
+- `id` は target 内で stable かつ一意値。`branch`/`phase`/`target_type` は別 field である。
+- `phase` は `installation`, `registration`, `discovery`, `activation`, `runtime_start`, `initialize`, `tool_discovery`, `representative_operation` のいずれかである。
+- `blocked_by` は同一 target の verification item ID list。未知 ID、self reference、cycle は schema error。
+- `probe` は required item に必須である。`kind` は `command`, `mcp_request`, `agent_action` のいずれか。`command` は non-empty `argv` list、`mcp_request` は `request: initialize|tool_discovery|representative_tool_call` と必要時の `tool`、`agent_action` は `action: discovery|activation` と optional `prompt` を持つ。
 - `required_for_e2e: false` の item は E2E completion 判定に含めない。
 
 ### layer vocabulary
@@ -115,7 +161,7 @@ choice / installer / cli / env / settings / generated_config / registration / di
 
 ### branch + layer mapping
 
-Setup Contract は expected topology を宣言。audit で observed topology + discrepancy を生成。
+Setup Contract は expected topology を宣言。audit で observed topology + discrepancies を生成。
 
 ---
 
@@ -161,10 +207,13 @@ Setup Contract は expected topology を宣言。audit で observed topology + d
 ### 新 script: `audit-contract.sh`
 
 ```bash
-bash audit-contract.sh <repo-path> [--contract <path>]
+bash audit-contract.sh [--contract <repo-relative-path>] \
+  [--format json|markdown|both] [--output-dir <target-external-dir>] <repo-path>
 ```
 
 責務：静的・構造的整合性。`verify-setup.sh` とは分離。
+
+default は `--format json` で、JSON Audit Report を stdout に出す。`--format markdown` は同じ内容の Markdown を stdout に出す。`--format both` は `--output-dir` を必須とし、target repository 外の指定 directory に `audit-report.json` と `audit-report.md` を書き込む。target repository 内の output directory は usage error とする。Audit Report の top-level key は `contract_discovery`, `observed_topology`, `discrepancies`, `schema_errors`, `next_actions` に固定する。`discrepancies` は list であり、単数形 `discrepancy` は使用しない。
 
 ### 処理
 
@@ -181,13 +230,14 @@ bash audit-contract.sh <repo-path> [--contract <path>]
 
 ```yaml
 contract_discovery:
-  status: found | not_found | ambiguous
+  status: found | not_found | ambiguous | contract_error
   path: docs/agent-setup-contract.md
   source: explicit | repository_declared | marker_scan
 ```
 
 - `not_found`: audit finding は生成せず、Setup Contract extraction に戻す
 - `ambiguous`: Agent semantic review に戻す
+- `contract_error`: malformed explicit path または malformed frontmatter。schema error として終了する
 - 通常 Markdown を Contract と誤認しない
 
 ### finding state
@@ -201,6 +251,8 @@ finding_state: confirmed | candidate | unresolved
 - `unresolved`: evidence は取得済みだが semantic review が必要
 
 `confirmed` でも自動修正は行わない。gap classification と修正方針は Agent 判断。
+
+Audit Report は finding ごとに `affected_target_ids` を必須で出力する。`schema_errors`、または target に紐づく `confirmed` finding がある場合、verification orchestrator は当該 target の probe を開始せず `audit_blocked` を記録する。`candidate` または `unresolved` finding は verification status を直接変更しないが、Agent semantic review が finding を解消するまで当該 target の E2E sign-off を `not_verified` に固定する。影響を受けない target の verification は継続できる。
 
 ### gap classification
 
@@ -272,6 +324,14 @@ capability_assessment:
 ```
 
 `available` / `unavailable` / `unknown` は generic prerequisite から自動導出しない。
+
+### verification execution owner
+
+`verify-setup.sh` は唯一の orchestration owner である。CLI parse、Contract discovery、PyYAML preflight、audit gate 判定、capability assessment、report assembly、exit status を所有する。target-specific operation は新しい `scripts/run-target-probes.sh` だけが実行する。`verify-setup.sh` は target ごとに依存順で probe を起動し、probe output を Verification Report へ写す。probe が target repository、user-local settings、global config、external service を直接更新してはならない。
+
+`run-target-probes.sh --contract <path> --target <target-id> --phase <phase> --evidence-dir <external-temp-dir>` は JSON object を stdout に1件だけ出力する。shape は `{target_id, item_id, status, reason, evidence, error_category}`、`status` は `verified`, `not_verified`, `not_applicable`、`error_category` は `null`, `capability_unavailable`, `runtime_failure`, `audit_blocked`, `safety_blocked` のいずれかとする。server process の start/stop、timeout、temporary fixture cleanup は probe owner が担い、cleanup failure は `safety_blocked` として返す。
+
+P0 は Setup Contract audit、capability assessment、dry-run safety を実装する。P1 は MCP stdio JSON-RPC の `initialize` / `tool_discovery` / safe `representative_tool_call`、Skill の `agent_action` discovery / activation、CLI と Service の read-only `command` probe を実装する。Plugin、Hook、`other/custom` は P1 では static phase verification と Contract-defined handoff のみを出力し、executor が未定義の probe を発明しない。
 
 ---
 
@@ -382,6 +442,12 @@ unknown → not_executed
 - 終了時に cleanup。
 - `external_effects` に `mutation_surfaces` を追加して可視化する。
 
+### process-start I/O policy
+
+`verify-setup.sh --dry-run` は target repository に対する最初の write より前から不変条件を適用する。`.agent-setup/` を含む target repository cache を作成・更新しない。analysis cache が必要な場合は `mktemp` で作成した target 外 directory にのみ保存し、stdout pipeline として consumer に渡す。before snapshot は Contract discovery と read-only parse の後、target repository への write より前に取得する。snapshot data、probe evidence、temporary fixture は target 外に置く。
+
+`--report <path>` は dry-run でも使用できるが、正規化後に target repository 外でなければ usage error とする。report は明示的 artifact であり snapshot invariant の例外にはしない。temporary storage cleanup の失敗は `dry_run_invariant_violation` で exit 1 とし、終了後は `.agent-setup` を含む declared snapshot surface と repository working tree が unchanged でなければならない。
+
 ---
 
 ## Target-Specific E2E Verification
@@ -415,6 +481,29 @@ installation / registration → discovery / readiness → activation / invocatio
 
 ---
 
+## CLI、output、error contract
+
+`verify-setup.sh` の grammar は次に固定する。options は positional repository path より前に指定する。
+
+```bash
+bash verify-setup.sh [--dry-run] [--contract <repo-relative-path>] \
+  [--report <target-external-markdown-path>] <repo-path>
+```
+
+`--report` 未指定時の stdout は既存互換の JSON verification plan である。既存の `commands`, `notes`, `makefile_targets` key は保持し、追加 key は additive とする。`--report` 指定時も stdout は同じ JSON plan とし、Verification Report は指定 path に YAML frontmatter + Markdown で書き込む。report path が target repository 内、parent が存在しない、または書込み不能なら usage error とする。
+
+dry-run command decision vocabulary は `execute` と `not_executed` だけである。通常 plan の risk category は `safe` と `review` だけであり、両者を同じ field に混在させない。dry-run decision は `dry_run.decision`、通常 risk category は `category` に出力する。
+
+exit code は `0` = all required targets `verified` または `not_applicable`、`1` = unexpected operational failure または `dry_run_invariant_violation`、`2` = usage error / malformed Setup Contract、`3` = PyYAML dependency unavailable、`4` = audit gate、capability unavailable、または target runtime failure により required target が `not_verified` とする。Verification Report は exit 4 の場合も生成可能なら必ず出力し、`error_category` を `audit_blocked`, `capability_unavailable`, `runtime_failure`, `safety_blocked` のいずれかで記録する。
+
+## Parser dependency policy
+
+Setup Contract parser は runtime dependency の `PyYAML >=6.0,<7` である。`audit-contract.sh` と `verify-setup.sh` は最初の Contract parse 前に availability を確認し、見つからなければ install を試みず、stderr に provisioning command と handoff を出して exit 3 にする。target repository への install、user-local install、dry-run 中の install は禁止する。
+
+skill distribution は `skills/agent-driven-setup/requirements.txt` にこの range を記録する。skill caller は execution environment へ事前に dependency を provision し、CI は ephemeral runner で `python3 -m pip install -r skills/agent-driven-setup/requirements.txt` を実行してから script test を実行する。dependency がない local caller は explicit handoff を受け、target の verification は `not_verified` となる。
+
+---
+
 ## Regression Evidence / TDD
 
 - 導入先 repository 側に回帰テストが原則。
@@ -422,6 +511,7 @@ installation / registration → discovery / readiness → activation / invocatio
 - skill 自身の script 変更は skill 側の script test で担保。
 - `evals.json` 拡張は P2 対象外。
 - 自動化不能な場合は「自動化できない理由 / 再現方法 / 修正後の検証方法 / 結果」を記録し、その箇所を完全 Verified 扱いにしない。
+- source behavior を変更する task は必ず RED test/fixture、RED command と期待 failure、minimum GREEN、GREEN command と期待 success、必要時だけ REFACTOR、再実行、commit の順で実施する。documentation-only task は runtime RED を要求しない。
 
 ---
 
@@ -457,7 +547,7 @@ installation / registration → discovery / readiness → activation / invocatio
 | capability requirement | verification item の `required_capabilities` | capability assessment → verification execution 可否 |
 | handoff definition | handoff ID + handoff contract | handoff 選択 / 実行記録 / evidence evaluation |
 | handoff ID | Contract 内で定義 | report 内で参照 |
-| audit report schema | `observed_topology`, `discrepancy`, `finding_state` | verification 計画の入力 |
+| audit report schema | `observed_topology`, `discrepancies`, `finding_state`, `affected_target_ids` | verification 計画の入力 |
 | layer vocabulary | 推奨セット | target-specific phase 設計の参考 |
 | external mutation surfaces | `external_effects.mutation_surfaces` | scoped snapshot の対象 |
 
