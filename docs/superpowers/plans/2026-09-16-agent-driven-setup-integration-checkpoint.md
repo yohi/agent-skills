@@ -40,6 +40,7 @@ Any other implementation-delta path requires an explicit scope decision before s
 Apply the following guard to the union of committed, staged, unstaged, and untracked paths. It exits nonzero for every path outside the permitted list, including P2 eval files.
 
 ```bash
+set -e
 set -o pipefail
 is_allowed_implementation_path() {
   case "$1" in

@@ -145,6 +145,7 @@ verification:
 ```
 
 - `verification.targets` の key は `setup_target` の target ID と一致する。各 target の `target_type` は `setup_target.<target_id>.target_type` と一致する。
+- 各 target の `items` は `minItems: 1` の non-empty list とする。空の `items` は schema error とし、`not_applicable` または exit 0 に派生させない。
 - `id` は target 内で stable かつ一意値。`branch`/`phase`/`target_type` は別 field である。
 - `phase` は `installation`, `registration`, `discovery`, `activation`, `runtime_start`, `initialize`, `tool_discovery`, `representative_operation` のいずれかである。
 - `blocked_by` は同一 target の verification item ID list。未知 ID、self reference、cycle は schema error。
@@ -400,7 +401,7 @@ Spec 2 が `required_capabilities` の ID を `setup-capability-matrix.md` で�
 
 `verify-setup.sh` は唯一の orchestration owner である。CLI parse、path-selection gate、Contract discovery、enhanced path の PyYAML preflight、audit gate 判定、capability assessment、report assembly、dry-run admission、exit status を所有する。target-specific operation は新しい `scripts/run-target-probes.sh` だけが実行する。`verify-setup.sh` は target ごとに依存順で verification item ID を指定して probe を起動し、item から導出した phase と probe output を Verification Report へ写す。probe は宣言されていない persistent mutation を行ってはならず、target repository、user-local settings、global config、external service を更新してはならない。P1 の Skill `agent_action` discovery / activation は自動実行せず、Contract-defined handoff 境界とする。P1 の MCP `temporary_fixture` は runtime process、operation、cleanup のいずれも自動実行せず `not_verified` / `safety_blocked`、dry-run では `not_executed` とする。
 
-`run-target-probes.sh --contract <path> --target <target-id> --item <verification-item-id> --evidence-dir <external-temp-dir>` は JSON object を stdout に1件だけ出力する。`--item` は target 内で一意な verification item ID を指定し、phase はその item から導出する。v1 の executor interface に `--phase` selector は存在しない。分類共有のため、別モードとして `run-target-probes.sh --classify-only` は stdin の classification input を受け、`{effective_safety, declaration_matches}` を stdout に1件だけ出力する。shape は `{target_id, item_id, status, reason, evidence, error_category}`、`status` は `verified`, `not_verified`, `not_applicable`、`error_category` は `null`, `capability_unavailable`, `runtime_failure`, `audit_blocked`, `safety_blocked` のいずれかとする。server process の start/stop、timeout、runtime command / command probe / 将来明示的に supported となる adapter の process start 直前の safety enforcement、P1 unsupported probe の拒否は probe owner が担う。P1 Skill `agent_action` adapter は support boundary により process start へ進めない。MCP runtime command は `runtime.safety` を宣言として同じ classifier に渡し、effective safety が `read_only` で declaration が一致した場合だけ normal verification で start する。通常 verification の safety rejection または unsupported probe mode は `not_verified` / `safety_blocked` として返す。dry-run で抑止された operation、P1 Skill adapter、または MCP runtime は target probe result を生成せず、orchestrator の `dry_run.decision: not_executed` に記録する。
+`run-target-probes.sh --contract <path> --target <target-id> --item <verification-item-id> --evidence-dir <external-temp-dir>` は JSON object を stdout に1件だけ出力する。`--item` は target 内で一意な verification item ID を指定し、phase はその item から導出する。v1 の executor interface に `--phase` selector は存在しない。分類共有のため、別モードとして `run-target-probes.sh --classify-only` は stdin の classification input を受け、`{effective_safety, declaration_matches}` を stdout に1件だけ出力する。shape は `{target_id, item_id, status, reason, evidence, error_category}`、`status` は `verified`, `not_verified`, `not_applicable`、`error_category` は `null`, `capability_unavailable`, `runtime_failure`, `audit_blocked`, `safety_blocked`, `dependency_blocked` のいずれかとする。server process の start/stop、timeout、runtime command / command probe / 将来明示的に supported となる adapter の process start 直前の safety enforcement、P1 unsupported probe の拒否は probe owner が担う。P1 Skill `agent_action` adapter は support boundary により process start へ進めない。MCP runtime command は `runtime.safety` を宣言として同じ classifier に渡し、effective safety が `read_only` で declaration が一致した場合だけ normal verification で start する。通常 verification の safety rejection または unsupported probe mode は `not_verified` / `safety_blocked` として返す。dry-run で抑止された operation、P1 Skill adapter、または MCP runtime は target probe result を生成せず、orchestrator の `dry_run.decision: not_executed` に記録する。
 
 P0 は Setup Contract audit、capability assessment、dry-run safety を実装する。P1 は `runtime.command` が Policy v1 の known `read_only` と一致する MCP stdio JSON-RPC の `initialize` / `tool_discovery` / `safety: read_only` の `representative_tool_call`、および CLI と Service の実効 safety が `read_only` の `command` probe を実装する。Skill の `agent_action` discovery / activation は P1 では自動実行せず、各 item の Contract-defined handoff 境界を出力する。MCP `temporary_fixture`、`mutating` / `unknown` command、safety を満たさない runtime command は自動実行せず、`safety_blocked`（dry-run では `not_executed`）とする。Plugin、Hook、`other/custom` は P1 では static phase verification と Contract-defined handoff のみを出力し、executor が未定義の probe を発明しない。
 
@@ -438,7 +439,16 @@ targets:
 - `verified`: すべての `required_for_e2e: true` かつ `not_applicable` でない item が `verified`
 - `not_verified`: それ以外
 
-`blocked_by` は状態伝播ではなく「その item を現在実行できない理由」に留める。
+`blocked_by` は状態伝播ではなく「その item を現在実行できない理由」に留める。依存先が `not_verified` であるため probe をスキップする場合、依存 item は次の固定値で Verification Report に記録する。
+
+- `status: not_verified`
+- `reason: blocked_by_unverified_dependency`
+- `error_category: dependency_blocked`
+- `handoff`: item 自身に Contract-defined `handoff_id` がある場合だけ、`status: pending` / `evaluation_result: needs_review` の handoff execution record を出力する。`handoff_id` がない場合、または依存先の handoff は出力しない。
+
+この item が `required_for_e2e: true` の場合、target の `e2e_status` は `not_verified` とし、required target の未検証として exit 4 にする。`required_for_e2e: false` の item の依存スキップは target の E2E status と exit status を変更しない。
+
+`dependency_blocked` は orchestrator が依存スキップを report assembly で記録する値であり、probe process はこの値を返さない。
 
 ---
 
@@ -575,7 +585,7 @@ dry-run command decision vocabulary は `execute` と `not_executed` だけで�
 
 通常 verification で required target が safety gate により `not_verified` になった場合は exit 4 とする。dry-run で安全ポリシーにより抑止した operation は `not_executed` であり、target runtime failure ではない。安全ポリシーを迂回した mutation または temporary storage / snapshot cleanup failure は、従来どおり `dry_run_invariant_violation` として exit 1 とする。
 
-exit code は `0` = all required targets `verified` または `not_applicable`、`1` = unexpected operational failure または `dry_run_invariant_violation`、`2` = usage error / malformed Setup Contract、`3` = PyYAML dependency unavailable、`4` = audit gate、capability unavailable、safety blocked、または target runtime failure により required target が `not_verified` とする。Verification Report は exit 4 の場合も生成可能なら必ず出力し、`error_category` を `audit_blocked`, `capability_unavailable`, `runtime_failure`, `safety_blocked` のいずれかで記録する。
+exit code は `0` = all required targets `verified` または `not_applicable`、`1` = unexpected operational failure または `dry_run_invariant_violation`、`2` = usage error / malformed Setup Contract、`3` = PyYAML dependency unavailable、`4` = audit gate、capability unavailable、safety blocked、dependency blocked、または target runtime failure により required target が `not_verified` とする。Verification Report は exit 4 の場合も生成可能なら必ず出力し、`error_category` を `audit_blocked`, `capability_unavailable`, `runtime_failure`, `safety_blocked`, `dependency_blocked` のいずれかで記録する。
 
 ## Workflow path and parser dependency policy
 
