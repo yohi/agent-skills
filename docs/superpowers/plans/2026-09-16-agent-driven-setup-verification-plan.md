@@ -4,7 +4,7 @@
 
 **Goal:** Add safe, contract-driven capability assessment and target-specific verification while preserving the existing verification-plan stdout interface.
 
-**Architecture:** `verify-setup.sh` is the sole orchestrator. It owns CLI parsing, temporary analysis, audit gates, capability assessment, report generation, and exit codes. `run-target-probes.sh` is the only target-operation executor and returns one fixed JSON result. Both consume Setup Contract v1 and PyYAML without installing dependencies or writing to the target during dry-run.
+**Architecture:** `verify-setup.sh` is the sole orchestrator. It owns CLI parsing, path selection, temporary analysis, audit gates, capability assessment, report generation, and exit codes. `run-target-probes.sh` is the only target-operation executor and returns one fixed JSON result. The enhanced path consumes Setup Contract v1 and PyYAML without installing dependencies or writing to the target during dry-run; the legacy simple path remains usable without PyYAML or Contract parsing.
 
 **Tech Stack:** Bash 4+, Python 3, PyYAML `>=6.0,<7`, JSON, YAML frontmatter, Markdown.
 
@@ -12,7 +12,7 @@
 
 - P0 and P1 only. Do not modify `evals/evals.json` or eval cases.
 - Use the Setup Contract v1 schema, discovery protocol, CLI grammar, and error policy from the design without deviation.
-- PyYAML is runtime-provisioned by the caller/CI; scripts preflight it and never install it.
+- PyYAML is runtime-provisioned by the caller/CI for the enhanced path; enhanced-path scripts preflight it and never install it. The legacy simple path does not require PyYAML.
 - `verify-setup.sh --dry-run` never writes to the target repository, including `.agent-setup`.
 - `--report` paths and every temporary artifact are outside the target repository in dry-run.
 - Capability availability and target verification result are separate report fields.
@@ -52,10 +52,10 @@
 
 **Produces:** capability vocabulary, target default profiles, and documentation-only verification rules.
 
-**Interfaces:** capability status is exactly `available`, `unavailable`, or `unknown`; P1 supports MCP stdio, Skill agent actions, and read-only CLI/Service commands; Plugin, Hook, and `other/custom` return Contract-defined handoff without invented probes.
+**Interfaces:** capability status is exactly `available`, `unavailable`, or `unknown`; Spec 2 resolves each Contract capability ID against `setup-capability-matrix.md`, with a missing definition reported as `unknown` and its dependent item as `not_verified`; P1 supports MCP stdio, Contract-adapter Skill agent actions, and read-only CLI/Service commands; Plugin, Hook, and `other/custom` return Contract-defined handoff without invented probes.
 
 **RED:**
-- [ ] Add documentation assertions for `mcp_runtime_probe`, `agent_discovery_probe`, `representative_activation_probe`, `available | unavailable | unknown`, target-operation separation, and `unknown → not_verified`.
+- [ ] Add documentation assertions for `mcp_runtime_probe`, `agent_discovery_probe`, `representative_activation_probe`, `available | unavailable | unknown`, missing matrix definitions, target-operation separation, and `unknown → not_verified`.
 - [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh`.
 - [ ] Confirm the assertions fail before the reference material exists.
 
@@ -80,24 +80,25 @@
 
 **Depends on:** Spec 1 Tasks 1 and 2; Task 1.
 
-**Consumes:** `verify-setup.sh [--dry-run] [--contract <repo-relative-path>] [--report <target-external-markdown-path>] <repo-path>`, Setup Contract discovery, and mutation-surface semantics.
+**Consumes:** `verify-setup.sh [--dry-run] [--contract <repo-relative-path>] [--report <target-external-markdown-path>] <repo-path>`, the PyYAML-free legacy/enhanced path-selection gate, Setup Contract discovery, and mutation-surface semantics.
 
 **Produces:** additive dry-run object with `dry_run.decision: execute|not_executed`, external temporary cache, before/after snapshot, and exit codes 1 through 3.
 
-**Interfaces:** normal `category` remains `safe|review`; dry-run never uses `safe` or `review` as its decision; malformed grammar/Contract is exit 2 and missing PyYAML is exit 3 with no install attempt.
+**Interfaces:** normal `category` remains `safe|review`; dry-run never uses `safe` or `review` as its decision; CLI parsing and simple-path selection do not require PyYAML; the legacy path is selected when there is no trigger or Contract indicator; the enhanced path preflights PyYAML before canonical Contract discovery or any target write; malformed grammar/Contract is exit 2 and missing enhanced-path PyYAML is exit 3 with no install attempt.
 
 **RED:**
 - [ ] Add a pristine Git fixture without `.agent-setup`; invoke `verify-setup.sh --dry-run <repo>` and assert `test ! -e "$repo/.agent-setup"` and empty `git -C "$repo" status --porcelain`.
 - [ ] Add fixtures asserting `node --version` and `git status --porcelain` are `dry_run.decision == "execute"`, while `npm install` and `unknown-command --check` are `"not_executed"`.
 - [ ] Add a target-internal `--report` fixture and a missing-PyYAML PATH fixture.
+- [ ] Add a no-trigger/no-Contract simple-repository fixture with a PATH lacking importable PyYAML; assert the legacy JSON plan succeeds without a dependency handoff. In the same RED setup, add an enhanced Contract fixture and assert that the same missing dependency returns exit 3 without an install attempt.
 - [ ] Run the suite and confirm failure because the current script writes `.agent-setup` before classification and has no new grammar.
 
 **GREEN:**
 - [ ] Parse all options before one required repository path and preserve default stdout JSON.
-- [ ] Before any target write, preflight PyYAML, discover/read the Contract, create target-external temporary storage, and take the before snapshot.
+- [ ] Parse CLI and perform the read-only, PyYAML-free path-selection gate first. Keep the no-trigger/no-Contract simple path on the existing workflow without PyYAML; only after enhanced path selection preflight PyYAML, discover/read the Contract, create target-external temporary storage, and take the before snapshot before any target write.
 - [ ] In dry-run, analyze through the external temporary cache; never create or update the target `.agent-setup` cache.
 - [ ] Classify only known read-only commands as `execute`; suppress mutating and unknown commands as `not_executed`; emit invariant violation and exit 1 on snapshot or cleanup failure.
-- [ ] Reject target-internal report paths in dry-run and emit exit 2; report missing PyYAML as exit 3 with an explicit provisioning handoff.
+- [ ] Reject target-internal report paths in dry-run and emit exit 2; report missing PyYAML as exit 3 with an explicit provisioning handoff only for the enhanced path, while preserving simple-path success without PyYAML.
 - [ ] Run the suite and confirm every added fixture passes.
 
 **REFACTOR:**
@@ -153,10 +154,10 @@
 
 **Produces:** `capability_assessment.<capability> = {status, reason, evidence}` and per-item decision data.
 
-**Interfaces:** only `verify-setup.sh` owns assessment; an available capability plus target failure remains `available`; unavailable/unknown capability yields `not_verified` and only its referenced `handoff_id` may be emitted.
+**Interfaces:** only `verify-setup.sh` owns assessment; matrix lookup occurs in Spec 2 and an undefined setup capability is `unknown`; an available capability plus target failure remains `available`; unavailable/unknown capability yields `not_verified` and only its referenced `handoff_id` may be emitted.
 
 **RED:**
-- [ ] Add fixtures for unavailable `mcp_runtime_probe`, unknown Skill activation capability, available MCP runtime with initialize failure, and an item without `handoff_id`.
+- [ ] Add fixtures for an undefined setup capability, unavailable `mcp_runtime_probe`, unknown Skill activation capability, available MCP runtime with initialize failure, and an item without `handoff_id`.
 - [ ] Run the suite and confirm failure because assessment and target result are not separate fields.
 
 **GREEN:**
@@ -183,19 +184,19 @@
 
 **Depends on:** Tasks 2 through 4.
 
-**Consumes:** `run-target-probes.sh --contract <path> --target <target-id> --phase <phase> --evidence-dir <external-temp-dir>` and Contract `probe` definitions.
+**Consumes:** `run-target-probes.sh --contract <path> --target <target-id> --item <verification-item-id> --evidence-dir <external-temp-dir>` and Contract `probe` definitions, including explicit MCP arguments/safety and Skill adapter definitions.
 
 **Produces:** one JSON object `{target_id, item_id, status, reason, evidence, error_category}` per invocation.
 
-**Interfaces:** executor exclusively owns process lifecycle, timeout, temporary fixture cleanup, and target operation execution; status is `verified|not_verified|not_applicable`; error category is `null|capability_unavailable|runtime_failure|audit_blocked|safety_blocked`.
+**Interfaces:** `--item` selects one target-local verification item; the executor derives phase from that item and never selects by phase alone. Executor exclusively owns process lifecycle, timeout, temporary fixture cleanup, and target operation execution; MCP representative calls use Contract-provided `tool`, JSON-object `arguments`, `safety`, and required `mutation_surface_id` for temporary fixtures; Skill `agent_action` uses Contract-provided public adapter `argv` and prompt stdin; adapter exit 0 plus observable response is `verified`, unavailable mechanism is `capability_unavailable`, and non-zero exit is `runtime_failure`; status is `verified|not_verified|not_applicable`; error category is `null|capability_unavailable|runtime_failure|audit_blocked|safety_blocked`.
 
 **RED:**
-- [ ] Add an MCP stdio fixture that answers initialize and tools/list, a fixture whose initialize returns an error, a safe representative tool fixture, a Skill discovery fixture, a CLI read-only command fixture, and a Plugin fixture with only a handoff.
+- [ ] Add an MCP stdio fixture that answers initialize and tools/list, a fixture whose initialize returns an error, a safe representative tool fixture with explicit `tool`, `arguments`, and `safety` plus a temporary mutation-surface reference when needed, a Skill discovery/activation fixture with an explicit public adapter, a CLI read-only command fixture, and a Plugin fixture with only a handoff.
 - [ ] Run the suite and confirm failure because the executor does not exist and no probe JSON can be parsed.
 
 **GREEN:**
-- [ ] Implement P1 MCP stdio JSON-RPC `initialize`, `tool_discovery`, and Contract-selected safe representative tool call with timeout and termination.
-- [ ] Implement Skill `agent_action` discovery/activation only through observable agent mechanisms; return `not_verified` when unavailable.
+- [ ] Implement P1 MCP stdio JSON-RPC `initialize`, `tool_discovery`, and the Contract-selected safe representative tool call using its explicit `tool`, `arguments`, `safety`, and any required `mutation_surface_id`, with timeout and termination.
+- [ ] Implement Skill `agent_action` discovery/activation by executing the Contract-provided public adapter `argv` without a shell and passing `prompt` through its declared stdin mode; return `not_verified` when the adapter or capability is unavailable.
 - [ ] Implement read-only `command` probes for CLI/Service.
 - [ ] For Plugin, Hook, and `other/custom`, return `not_verified` with only a Contract-defined handoff; never invent a command or operation.
 - [ ] On cleanup failure return `safety_blocked`; on target operation error return `runtime_failure` without changing capability availability.
@@ -254,7 +255,7 @@
 
 **Produces:** integration-checkpoint evidence, not new implementation.
 
-**Interfaces:** validate the committed delta with `git diff --name-only "$IMPLEMENTATION_BASE_SHA"...HEAD` and the dirty state with `git status --short` separately.
+**Interfaces:** validate the committed delta with `git diff --name-only "$IMPLEMENTATION_BASE_SHA"...HEAD` against the complete permitted Issue #12 P0/P1 implementation-path set, and validate the dirty state with `git status --short` separately. Do not interpret the shared baseline diff as a Spec 2-only delta.
 
 **RED:**
 - [ ] Not applicable: this is a read-only verification task.
@@ -262,7 +263,7 @@
 **GREEN:**
 - [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh` and confirm success.
 - [ ] Run `node scripts/validate-skills.js` and confirm 0 errors and 0 warnings.
-- [ ] Run the baseline diff and confirm only the intended Spec 2 paths changed; separately confirm no eval path changed.
+- [ ] Run the baseline diff and confirm every changed path is within the permitted Issue #12 P0/P1 implementation paths, including the already-completed Spec 1 paths; separately confirm no eval path changed.
 - [ ] Run the Integration Checkpoint `is_allowed_implementation_path` guard against committed, staged, unstaged, and untracked paths; confirm it exits 0.
 
 **REFACTOR:**

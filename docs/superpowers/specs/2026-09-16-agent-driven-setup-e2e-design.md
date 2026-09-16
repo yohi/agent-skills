@@ -97,7 +97,7 @@ YAML frontmatter は唯一の機械可読 contract である。本文は説明�
 | `canonical_source` | はい | `{kind, value, ref_mode, ref}` | `kind` は `repository_path`, `url`, `registry`, `external_resource`。`value` は kind に対応する canonical identifier。`ref_mode` は `immutable`, `mutable`, `not_applicable`。`ref` は `ref_mode` が `not_applicable` 以外なら必須、そうでなければ禁止。 |
 | `runtime` | はい | `{mode, command}` | `mode` は `process`, `in_process`, `agent_discovery`, `external_service`, `not_applicable`。`command` は `process` のときだけ必須の non-empty argv list、それ以外では禁止。 |
 
-`configuration_branches[*]` は `{id, layers}` である。`layers` は non-empty list であり、各 layer は stable かつ branch 内で一意な `id` と `kind` を持つ。`kind` は `choice`, `installer`, `cli`, `env`, `settings`, `generated_config`, `registration`, `discovery`, `runtime_consumer`, `activation`, `representative_operation`, `verification` のいずれかである。機械的な locator は `kind` ごとに次の shape を使う。
+`configuration_branches[*]` は `{id, layers}` である。`layers` は non-empty list であり、各 layer は stable かつ branch 内で一意な `id` と `kind` を持つ。v1 の `kind` は closed enum であり、`choice`, `installer`, `cli`, `env`, `settings`, `generated_config`, `registration`, `discovery`, `runtime_consumer`, `activation`, `representative_operation`, `verification` のいずれかである。列挙されていない `kind` は schema error とし、v1 の実装は未知の locator shape や audit 規則を発明しない。機械的な locator は `kind` ごとに次の shape を使う。
 
 | `kind` | 必須 field | 任意 field |
 |---|---|---|
@@ -105,7 +105,7 @@ YAML frontmatter は唯一の機械可読 contract である。本文は説明�
 | `cli` | `option` | `path` |
 | `generated_config` | `path`, `key` | なし |
 | `runtime_consumer` | `path`, `symbol` | なし |
-| 上記以外 | `path` | `key`, `symbol` |
+| `choice` / `installer` / `settings` / `registration` / `discovery` / `activation` / `representative_operation` / `verification` | `path` | `key`, `symbol` |
 
 `path` は repository-relative path、`key` と `symbol` と `option` は non-empty string である。schema にない locator field は禁止する。これにより audit は layer の `kind` だけで検索規則を選択できる。
 
@@ -148,12 +148,13 @@ verification:
 - `id` は target 内で stable かつ一意値。`branch`/`phase`/`target_type` は別 field である。
 - `phase` は `installation`, `registration`, `discovery`, `activation`, `runtime_start`, `initialize`, `tool_discovery`, `representative_operation` のいずれかである。
 - `blocked_by` は同一 target の verification item ID list。未知 ID、self reference、cycle は schema error。
-- `probe` は required item に必須である。`kind` は `command`, `mcp_request`, `agent_action` のいずれか。`command` は non-empty `argv` list、`mcp_request` は `request: initialize|tool_discovery|representative_tool_call` と必要時の `tool`、`agent_action` は `action: discovery|activation` と optional `prompt` を持つ。
+- `required_capabilities` は optional list であり、指定時は null を禁止する。各要素は `[a-z][a-z0-9_-]*` に一致する unique な non-empty capability ID とする。同じ capability ID は複数 item から参照できる。Spec 1 はこの field の型・syntax・item 内重複だけを検証し、setup capability registry への存在確認と availability 判定は行わない。
+- `probe` は required item に必須である。`kind` は `command`, `mcp_request`, `agent_action` のいずれか。`command` は non-empty `argv` list、`mcp_request` は `request: initialize|tool_discovery|representative_tool_call` を持つ。`initialize` と `tool_discovery` では `tool`, `arguments`, `safety`, `mutation_surface_id` を禁止し、`representative_tool_call` では `tool`、JSON object の `arguments`（空 object 可）、`safety: read_only|temporary_fixture` を必須とする。`safety: temporary_fixture` では `mutation_surface_id` も必須とし、`external_effects.mutation_surfaces` の `external` scope かつ `cleanup_required: true` の surface を参照する。`safety: read_only` では `mutation_surface_id` を禁止する。`agent_action` は `action: discovery|activation`、`adapter`、optional `prompt` を持つ。`adapter` は `{kind: command, argv: non-empty argv list, stdin: prompt|empty}` とし、shell 経由ではなく既存の公開された Agent mechanism を呼び出す。`stdin: prompt` のとき `prompt` は必須、`stdin: empty` のとき `prompt` は禁止する。adapter の exit 0 と観測可能な応答は `verified`、mechanism 不在は `capability_unavailable`、非 0 exit は `runtime_failure` とする。
 - `required_for_e2e: false` の item は E2E completion 判定に含めない。
 
 ### layer vocabulary
 
-推奨セット（必須ではなく拡張可能）。
+Setup Contract v1 では次の closed enum を normative vocabulary とする。列挙外の `kind` は schema error であり、拡張は v1 の Contract では許可しない。新しい layer kind が必要になった場合は schema version または本設計を改訂する。
 
 ```text
 choice / installer / cli / env / settings / generated_config / registration / discovery / runtime_consumer / activation / representative_operation / verification
@@ -223,7 +224,7 @@ default は `--format json` で、JSON Audit Report を stdout に出す。`--fo
 4. `installation` / `registration` / `discovery` / `activation` の参照先を検証
 5. `verification` 内の `blocked_by` ID 存在確認
 6. 全 schema 領域からの `handoff_id` 参照整合性確認
-7. `required_capabilities` が schema 上妥当・参照可能か確認（availability は判定しない）
+7. `required_capabilities` の list shape、capability ID syntax、item 内重複を確認する。setup capability 定義への lookup と availability は判定しない
 8. 結果を JSON / Markdown 両形式で出力
 
 ### Contract discovery
@@ -288,7 +289,7 @@ generic capability の availability source of truth は維持。`setup-capabilit
 
 ### 新 `setup-capability-matrix.md`
 
-setup-specific capability 定義と target type ごとの default profile。
+setup-specific capability の定義と target type ごとの default profile の source of truth。Setup Contract は target が必要とする capability ID の source of truth であり、Spec 1 は matrix に依存せず ID の形だけを検証する。Spec 2 はこの matrix で定義を解決して capability を評価する。
 
 ```yaml
 capabilities:
@@ -325,11 +326,13 @@ capability_assessment:
 
 `available` / `unavailable` / `unknown` は generic prerequisite から自動導出しない。
 
+Spec 2 が `required_capabilities` の ID を `setup-capability-matrix.md` で解決できない場合は `unknown` とし、reason に定義未検出を記録する。対応する verification item は `not_verified` とし、Contract に定義された handoff がある場合だけ handoff を出力する。これは Spec 1 の schema error ではない。
+
 ### verification execution owner
 
-`verify-setup.sh` は唯一の orchestration owner である。CLI parse、Contract discovery、PyYAML preflight、audit gate 判定、capability assessment、report assembly、exit status を所有する。target-specific operation は新しい `scripts/run-target-probes.sh` だけが実行する。`verify-setup.sh` は target ごとに依存順で probe を起動し、probe output を Verification Report へ写す。probe が target repository、user-local settings、global config、external service を直接更新してはならない。
+`verify-setup.sh` は唯一の orchestration owner である。CLI parse、path-selection gate、Contract discovery、enhanced path の PyYAML preflight、audit gate 判定、capability assessment、report assembly、exit status を所有する。target-specific operation は新しい `scripts/run-target-probes.sh` だけが実行する。`verify-setup.sh` は target ごとに依存順で verification item ID を指定して probe を起動し、item から導出した phase と probe output を Verification Report へ写す。probe が target repository、user-local settings、global config、external service を直接更新してはならない。
 
-`run-target-probes.sh --contract <path> --target <target-id> --phase <phase> --evidence-dir <external-temp-dir>` は JSON object を stdout に1件だけ出力する。shape は `{target_id, item_id, status, reason, evidence, error_category}`、`status` は `verified`, `not_verified`, `not_applicable`、`error_category` は `null`, `capability_unavailable`, `runtime_failure`, `audit_blocked`, `safety_blocked` のいずれかとする。server process の start/stop、timeout、temporary fixture cleanup は probe owner が担い、cleanup failure は `safety_blocked` として返す。
+`run-target-probes.sh --contract <path> --target <target-id> --item <verification-item-id> --evidence-dir <external-temp-dir>` は JSON object を stdout に1件だけ出力する。`--item` は target 内で一意な verification item ID を指定し、phase はその item から導出する。v1 の executor interface に `--phase` selector は存在しない。shape は `{target_id, item_id, status, reason, evidence, error_category}`、`status` は `verified`, `not_verified`, `not_applicable`、`error_category` は `null`, `capability_unavailable`, `runtime_failure`, `audit_blocked`, `safety_blocked` のいずれかとする。server process の start/stop、timeout、temporary fixture cleanup は probe owner が担い、cleanup failure は `safety_blocked` として返す。
 
 P0 は Setup Contract audit、capability assessment、dry-run safety を実装する。P1 は MCP stdio JSON-RPC の `initialize` / `tool_discovery` / safe `representative_tool_call`、Skill の `agent_action` discovery / activation、CLI と Service の read-only `command` probe を実装する。Plugin、Hook、`other/custom` は P1 では static phase verification と Contract-defined handoff のみを出力し、executor が未定義の probe を発明しない。
 
@@ -459,6 +462,7 @@ install / register → agent_discovery → representative_activation
 ```
 
 - `representative_activation_probe` available かつ安全なら representative prompt で activation 確認。
+- Skill の `agent_action` は Contract の `adapter.argv` を shell なしで実行し、`prompt` を指定された stdin mode で渡す。adapter は既存の公開された Agent discovery / activation seam でなければならず、executor は Contract にない Agent CLI、argv、prompt を発明しない。adapter の exit 0 と観測可能な応答だけを `verified` とし、mechanism 不在は `capability_unavailable`、非 0 exit は `runtime_failure` として `not_verified` にする。
 - 不可能なら `discovery: verified`, `activation: not_verified` に分離。
 
 ### MCP
@@ -468,7 +472,7 @@ runtime_start → initialize → tool_discovery → representative_tool_call
 ```
 
 - 特定 tool 名は generic skill に固定しない。
-- Setup Contract に基づいて安全な代表 tool を選択。
+- Setup Contract の `tool`、`arguments`、`safety`、必要時の `mutation_surface_id` で安全な代表 tool と入力を明示する。executor は tools/list の結果から未指定の tool や入力を発明しない。
 - read/write 双方が本質的なら一時データで検証。
 
 ### Plugin / Hook / CLI / Service
@@ -496,9 +500,22 @@ dry-run command decision vocabulary は `execute` と `not_executed` だけで�
 
 exit code は `0` = all required targets `verified` または `not_applicable`、`1` = unexpected operational failure または `dry_run_invariant_violation`、`2` = usage error / malformed Setup Contract、`3` = PyYAML dependency unavailable、`4` = audit gate、capability unavailable、または target runtime failure により required target が `not_verified` とする。Verification Report は exit 4 の場合も生成可能なら必ず出力し、`error_category` を `audit_blocked`, `capability_unavailable`, `runtime_failure`, `safety_blocked` のいずれかで記録する。
 
-## Parser dependency policy
+## Workflow path and parser dependency policy
 
-Setup Contract parser は runtime dependency の `PyYAML >=6.0,<7` である。`audit-contract.sh` と `verify-setup.sh` は最初の Contract parse 前に availability を確認し、見つからなければ install を試みず、stderr に provisioning command と handoff を出して exit 3 にする。target repository への install、user-local install、dry-run 中の install は禁止する。
+### Path selection and dependency timing
+
+`verify-setup.sh` の legacy simple path と enhanced Contract path の dependency 境界を次の順序に固定する。
+
+1. CLI と path の形式を PyYAML なしで parse する。
+2. 既存の trigger evidence、明示的 `--contract`、root `AGENTS.md` / `README.md` の standalone marker、marker-scan candidate の先頭 marker だけを read-only に確認する。この軽量 gate は YAML を parse せず、canonical な `contract_discovery` status を確定しない。
+3. trigger も Contract indicator もない場合は legacy simple path を選択し、既存の標準 workflow をそのまま実行する。この path は PyYAML を要求せず、Contract parse と enhanced verification を行わない。
+4. 明示的 `--contract`、repository-declared marker、marker-scan candidate、または Agent が enhanced path を選択した場合だけ enhanced path に入り、最初の YAML parse、Contract discovery、target write、snapshot より前に PyYAML preflight を行う。
+
+simple path での PyYAML 不在は既存互換として扱い、enhanced path での PyYAML 不在だけを dependency error とする。
+
+### Parser dependency policy
+
+Setup Contract parser は runtime dependency の `PyYAML >=6.0,<7` である。`audit-contract.sh` は Contract を扱う全 invocation で、`verify-setup.sh` は enhanced path で、最初の Contract parse 前に availability を確認する。見つからなければ install を試みず、stderr に provisioning command と handoff を出して exit 3 にする。target repository への install、user-local install、dry-run 中の install は禁止する。
 
 skill distribution は `skills/agent-driven-setup/requirements.txt` にこの range を記録する。skill caller は execution environment へ事前に dependency を provision し、CI は ephemeral runner で `python3 -m pip install -r skills/agent-driven-setup/requirements.txt` を実行してから script test を実行する。dependency がない local caller は explicit handoff を受け、target の verification は `not_verified` となる。
 
@@ -544,11 +561,11 @@ skill distribution は `skills/agent-driven-setup/requirements.txt` にこの ra
 |---|---|---|
 | Setup Contract schema | YAML frontmatter キー/構造 | verification planner / executor の入力 |
 | verification item ID | stable ID、命名規則推奨 | `blocked_by` 参照 |
-| capability requirement | verification item の `required_capabilities` | capability assessment → verification execution 可否 |
+| capability requirement | verification item の `required_capabilities` の ID・list shape・item 内一意性を検証。matrix lookup と availability は所有しない | `setup-capability-matrix.md` で定義を解決し、`available` / `unavailable` / `unknown` を assessment。unknown は item を `not_verified` にする |
 | handoff definition | handoff ID + handoff contract | handoff 選択 / 実行記録 / evidence evaluation |
 | handoff ID | Contract 内で定義 | report 内で参照 |
 | audit report schema | `observed_topology`, `discrepancies`, `finding_state`, `affected_target_ids` | verification 計画の入力 |
-| layer vocabulary | 推奨セット | target-specific phase 設計の参考 |
+| layer vocabulary | v1 closed enum と locator shape | target-specific phase 設計の入力。列挙外 kind は扱わない |
 | external mutation surfaces | `external_effects.mutation_surfaces` | scoped snapshot の対象 |
 
 ---

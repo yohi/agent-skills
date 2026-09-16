@@ -4,7 +4,7 @@
 
 **Goal:** Add the normative Setup Contract v1, deterministic contract discovery, and read-only cross-layer audit required for complex setup verification.
 
-**Architecture:** `setup-contract-schema.md` is the sole schema authority. `audit-contract.sh` parses only that YAML frontmatter, discovers it with the specified protocol, and emits the fixed Audit Report interface. It never writes to the target repository. Spec 2 consumes its report but does not change audit findings into runtime status.
+**Architecture:** `setup-contract-schema.md` is the sole schema authority. `audit-contract.sh` parses only that YAML frontmatter, discovers it with the specified protocol, and emits the fixed Audit Report interface. It never writes to the target repository. Spec 1 validates `required_capabilities` as contract-local IDs and list structure only; Spec 2 owns setup-capability definition lookup and availability assessment. Spec 2 consumes the audit report but does not change audit findings into runtime status.
 
 **Tech Stack:** Bash 4+, Python 3, PyYAML `>=6.0,<7`, Markdown, YAML frontmatter.
 
@@ -15,6 +15,8 @@
 - PyYAML is a runtime dependency; scripts preflight it and never install it.
 - `audit-contract.sh` performs no target-repository writes.
 - All target paths are repository-relative and may not escape the target root.
+- `configuration_branches[*].layers[*].kind` uses the v1 closed enum; unknown kinds are schema errors.
+- Spec 1 validates `required_capabilities` ID syntax and item-local uniqueness without loading the Spec 2 capability matrix or determining availability.
 - The existing simple-repository path remains unchanged.
 - Do not create AI agent configuration files.
 
@@ -49,17 +51,17 @@
 
 **Produces:** Contract v1 reference, valid MCP fixture, and one-line dependency file containing `PyYAML>=6.0,<7`.
 
-**Interfaces:** `setup_contract_schema_version` is integer `1`; target IDs and verification target keys match; layer and mutation-surface discriminators use the exact design vocabulary; PyYAML missing is `dependency_unavailable` / exit 3.
+**Interfaces:** `setup_contract_schema_version` is integer `1`; target IDs and verification target keys match; layer and mutation-surface discriminators use the exact v1 closed vocabulary; `required_capabilities` contains only unique item-local IDs matching `[a-z][a-z0-9_-]*`; Spec 1 does not perform capability-matrix lookup; PyYAML missing is `dependency_unavailable` / exit 3.
 
 **RED:**
-- [ ] Add `check_setup_contract_fixture_rejects_missing_runtime()` with a copied valid fixture whose `setup_target.mcp_main.runtime` is removed.
+- [ ] Make the RED setup self-contained: generate a minimal valid Contract mapping in a temporary fixture inside the test, copy it, and remove `setup_target.mcp_main.runtime` from the copy. Do not depend on the fixture or schema files created in GREEN.
 - [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh`.
-- [ ] Confirm failure from `assert "runtime" in target` while the schema document and fixture do not yet exist.
+- [ ] Confirm the intended failure is rejection of the missing `runtime` field; a file-not-found or missing-fixture failure is a RED setup failure, not the expected behavior failure.
 
 **GREEN:**
 - [ ] Write the schema reference as a field table, including requiredness, null meaning, IDs, path bases, discriminators, reference semantics, and exact discovery marker `<!-- agent-setup-contract: path -->`.
 - [ ] Add the complete MCP fixture and `requirements.txt`.
-- [ ] Extend the validation helper to load the fixture with `yaml.safe_load` and assert all required v1 fields, including a valid `mcp_request` probe and mutation surface.
+- [ ] Extend the validation helper to load the fixture with `yaml.safe_load` and assert all required v1 fields, including `required_capabilities` ID syntax/item-local uniqueness, a valid `mcp_request` probe, and mutation surface.
 - [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh` and confirm the fixture test passes.
 
 **REFACTOR:**
@@ -78,11 +80,11 @@
 
 **Depends on:** Task 1.
 
-**Consumes:** the v1 fixture, PyYAML dependency file, and contract-discovery protocol.
+**Consumes:** the v1 fixture, PyYAML dependency file, contract-discovery protocol, and the Spec 1-only `required_capabilities` shape policy.
 
 **Produces:** `audit-contract.sh [--contract <repo-relative-path>] [--format json|markdown|both] [--output-dir <target-external-dir>] <repo-path>` with `contract_discovery`, `schema_errors`, and exit codes 0, 2, 3.
 
-**Interfaces:** explicit path has priority; declaration markers are standalone exact lines in root `AGENTS.md` then `README.md`; marker scan considers only `SETUP-CONTRACT.md` and `docs/**/*.md`; report key is always `discrepancies`.
+**Interfaces:** explicit path has priority; declaration markers are standalone exact lines in root `AGENTS.md` then `README.md`; marker scan considers only `SETUP-CONTRACT.md` and `docs/**/*.md`; `required_capabilities` validation stops at ID syntax and item-local uniqueness and never looks up Spec 2 definitions; report key is always `discrepancies`.
 
 **RED:**
 - [ ] Add fixtures for an explicit contract, conflicting `AGENTS.md`/`README.md` markers, two marker-scan candidates, an escaping `../contract.md` path, undefined `handoff_id`, and cyclic `blocked_by`.
@@ -92,7 +94,7 @@
 **GREEN:**
 - [ ] Add PyYAML preflight; print an install handoff to stderr and exit 3 without installing.
 - [ ] Parse options before the positional repository path; reject invalid grammar and target-internal `--output-dir` with exit 2.
-- [ ] Implement the three discovery stages and validate target IDs, layer shapes, phase references, handoff references, item uniqueness, and `blocked_by` acyclicity.
+- [ ] Implement the three discovery stages and validate target IDs, the v1 closed layer shapes, `required_capabilities` ID syntax/item-local uniqueness, phase references, handoff references, item uniqueness, and `blocked_by` acyclicity.
 - [ ] Run the suite and confirm `found`, `not_found`, `ambiguous`, and `contract_error` fixtures emit their exact status and `schema_errors` payloads.
 
 **REFACTOR:**
@@ -115,7 +117,7 @@
 
 **Produces:** read-only `observed_topology`, `discrepancies`, and `next_actions`; every discrepancy contains `finding_state` and non-empty `affected_target_ids`.
 
-**Interfaces:** `env`, `cli`, `generated_config`, and `runtime_consumer` use their v1 field layouts; `confirmed`, `candidate`, and `unresolved` are audit-only states; `--format both` writes both report files outside the target and keeps JSON on stdout.
+**Interfaces:** `env`, `cli`, `generated_config`, and `runtime_consumer` use their v1 field layouts; all other accepted layer kinds use the v1 generic `path` layout; unknown kinds are schema errors; `confirmed`, `candidate`, and `unresolved` are audit-only states; `--format both` writes both report files outside the target and keeps JSON on stdout.
 
 **RED:**
 - [ ] Add a fixture with an absent generated-config key, an indirect runtime consumer, and an unrelated valid target.
