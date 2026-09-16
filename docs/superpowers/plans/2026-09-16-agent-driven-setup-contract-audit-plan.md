@@ -4,7 +4,7 @@
 
 **Goal:** Add the normative Setup Contract v1, deterministic contract discovery, and read-only cross-layer audit required for complex setup verification.
 
-**Architecture:** `setup-contract-schema.md` is the sole schema authority. `audit-contract.sh` parses only that YAML frontmatter, discovers it with the specified protocol, and emits the fixed Audit Report interface. It never writes to the target repository. Spec 1 validates `required_capabilities` as contract-local IDs and list structure only; Spec 2 owns setup-capability definition lookup and availability assessment. Spec 2 consumes the audit report but does not change audit findings into runtime status.
+**Architecture:** `setup-contract-schema.md` is the sole schema authority. `audit-contract.sh` parses only that YAML frontmatter, discovers it with the specified protocol, and emits the fixed Audit Report interface. It never writes to the target repository. Spec 1 validates `required_capabilities` as contract-local IDs and list structure only; Spec 2 owns setup-capability definition lookup, availability assessment, and probe safety enforcement. Spec 1 validates the shape and enum of probe safety declarations but never treats a Contract declaration as execution permission. Spec 2 consumes the audit report but does not change audit findings into runtime status.
 
 **Tech Stack:** Bash 4+, Python 3, PyYAML `>=6.0,<7`, Markdown, YAML frontmatter.
 
@@ -17,6 +17,7 @@
 - All target paths are repository-relative and may not escape the target root.
 - `configuration_branches[*].layers[*].kind` uses the v1 closed enum; unknown kinds are schema errors.
 - Spec 1 validates `required_capabilities` ID syntax and item-local uniqueness without loading the Spec 2 capability matrix or determining availability.
+- `command.safety` and `agent_action.adapter.safety` use `read_only|mutating|unknown`; `null` and out-of-enum values are schema errors. Spec 1 validates only their Contract shape and enum, while `run-target-probes.sh` owns effective classification and final enforcement.
 - The existing simple-repository path remains unchanged.
 - Do not create AI agent configuration files.
 
@@ -53,6 +54,8 @@
 
 **Interfaces:** `setup_contract_schema_version` is integer `1`; target IDs and verification target keys match; layer and mutation-surface discriminators use the exact v1 closed vocabulary; `required_capabilities` contains only unique item-local IDs matching `[a-z][a-z0-9_-]*`; Spec 1 does not perform capability-matrix lookup; PyYAML missing is `dependency_unavailable` / exit 3.
 
+**Safety boundary:** `command.safety` and `agent_action.adapter.safety` are required declarations with the enum `read_only|mutating|unknown`; `null` and out-of-enum values are schema errors. `temporary_fixture` remains limited to MCP `representative_tool_call` and requires an `external` / `snapshot: required` / `cleanup_required: true` mutation surface. Spec 1 rejects malformed safety fields but does not classify argv or authorize execution. The effective safety policy and process-start enforcement are Spec 2 responsibilities.
+
 **RED:**
 - [ ] Make the RED setup self-contained: generate a minimal valid Contract mapping in a temporary fixture inside the test, copy it, and remove `setup_target.mcp_main.runtime` from the copy. Do not depend on the fixture or schema files created in GREEN.
 - [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh`.
@@ -61,7 +64,7 @@
 **GREEN:**
 - [ ] Write the schema reference as a field table, including requiredness, null meaning, IDs, path bases, discriminators, reference semantics, and exact discovery marker `<!-- agent-setup-contract: path -->`.
 - [ ] Add the complete MCP fixture and `requirements.txt`.
-- [ ] Extend the validation helper to load the fixture with `yaml.safe_load` and assert all required v1 fields, including `required_capabilities` ID syntax/item-local uniqueness, a valid `mcp_request` probe, and mutation surface.
+- [ ] Extend the validation helper to load the fixture with `yaml.safe_load` and assert all required v1 fields, including `required_capabilities` ID syntax/item-local uniqueness, valid `mcp_request` safety values, `command.safety` / `agent_action.adapter.safety` enum values, and an eligible temporary mutation surface with `external` scope, `snapshot: required`, and `cleanup_required: true`.
 - [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh` and confirm the fixture test passes.
 
 **REFACTOR:**
@@ -84,17 +87,17 @@
 
 **Produces:** `audit-contract.sh [--contract <repo-relative-path>] [--format json|markdown|both] [--output-dir <target-external-dir>] <repo-path>` with `contract_discovery`, `schema_errors`, and exit codes 0, 2, 3.
 
-**Interfaces:** explicit path has priority; declaration markers are standalone exact lines in root `AGENTS.md` then `README.md`; marker scan considers only `SETUP-CONTRACT.md` and `docs/**/*.md`; `required_capabilities` validation stops at ID syntax and item-local uniqueness and never looks up Spec 2 definitions; report key is always `discrepancies`.
+**Interfaces:** explicit path has priority; declaration markers are standalone exact lines in root `AGENTS.md` then `README.md`; marker scan considers only `SETUP-CONTRACT.md` and `docs/**/*.md`; `required_capabilities` validation stops at ID syntax and item-local uniqueness and never looks up Spec 2 definitions; `command.safety` and `agent_action.adapter.safety` validation stops at the exact enum and does not classify or execute argv; report key is always `discrepancies`.
 
 **RED:**
-- [ ] Add fixtures for an explicit contract, conflicting `AGENTS.md`/`README.md` markers, two marker-scan candidates, an escaping `../contract.md` path, undefined `handoff_id`, and cyclic `blocked_by`.
+- [ ] Add fixtures for an explicit contract, conflicting `AGENTS.md`/`README.md` markers, two marker-scan candidates, an escaping `../contract.md` path, undefined `handoff_id`, cyclic `blocked_by`, and invalid `command.safety` / `agent_action.adapter.safety` values.
 - [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh`.
 - [ ] Confirm failures because `audit-contract.sh` does not exist and the expected JSON fields cannot be read.
 
 **GREEN:**
 - [ ] Add PyYAML preflight; print an install handoff to stderr and exit 3 without installing.
 - [ ] Parse options before the positional repository path; reject invalid grammar and target-internal `--output-dir` with exit 2.
-- [ ] Implement the three discovery stages and validate target IDs, the v1 closed layer shapes, `required_capabilities` ID syntax/item-local uniqueness, phase references, handoff references, item uniqueness, and `blocked_by` acyclicity.
+- [ ] Implement the three discovery stages and validate target IDs, the v1 closed layer shapes, `required_capabilities` ID syntax/item-local uniqueness, probe safety field shapes and enums, phase references, handoff references, item uniqueness, and `blocked_by` acyclicity. Do not classify or execute any probe in Spec 1.
 - [ ] Run the suite and confirm `found`, `not_found`, `ambiguous`, and `contract_error` fixtures emit their exact status and `schema_errors` payloads.
 
 **REFACTOR:**
@@ -185,11 +188,11 @@
 **Interfaces:** no runtime interface changes; complex repositories use Contract extraction then audit; `not_found` returns to extraction and `ambiguous` requires semantic review.
 
 **RED:**
-- [ ] Add documentation assertions for the exact Contract marker syntax, `audit-contract.sh` grammar, mutation-surface investigation, and simple-path preservation.
+- [ ] Add documentation assertions for the exact Contract marker syntax, `audit-contract.sh` grammar, mutation-surface investigation, probe safety declaration versus execution authority, and simple-path preservation.
 - [ ] Run the suite and confirm the header/content assertions fail before documentation is updated.
 
 **GREEN:**
-- [ ] Document trigger evidence, Contract placement, discovery marker, target type, configuration branches, and mutation surfaces.
+- [ ] Document trigger evidence, Contract placement, discovery marker, target type, configuration branches, mutation surfaces, and the rule that safety declarations do not authorize probe execution.
 - [ ] Document the enhanced flow without changing the existing standard flow.
 - [ ] Run the suite and confirm all documentation assertions pass.
 
