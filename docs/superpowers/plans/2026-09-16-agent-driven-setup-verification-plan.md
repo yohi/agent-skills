@@ -263,6 +263,7 @@
 - [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh` and confirm success.
 - [ ] Run `node scripts/validate-skills.js` and confirm 0 errors and 0 warnings.
 - [ ] Run the baseline diff and confirm only the intended Spec 2 paths changed; separately confirm no eval path changed.
+- [ ] Run the Integration Checkpoint `is_allowed_implementation_path` guard against committed, staged, unstaged, and untracked paths; confirm it exits 0.
 
 **REFACTOR:**
 - [ ] Not applicable.

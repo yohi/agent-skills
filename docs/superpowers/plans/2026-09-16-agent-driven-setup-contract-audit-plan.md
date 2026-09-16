@@ -220,6 +220,7 @@
 - [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh` and confirm success.
 - [ ] Run `node scripts/validate-skills.js` and confirm 0 errors and 0 warnings.
 - [ ] Run `git diff --name-only "$IMPLEMENTATION_BASE_SHA"...HEAD` and confirm the intended Spec 1 paths only.
+- [ ] Run the Integration Checkpoint `is_allowed_implementation_path` guard against committed, staged, unstaged, and untracked paths; confirm it exits 0.
 
 **REFACTOR:**
 - [ ] Not applicable.

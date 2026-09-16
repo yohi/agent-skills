@@ -17,10 +17,9 @@ Final scope validation must inspect both committed and uncommitted changes. Do n
 ```bash
 git diff --name-only "$IMPLEMENTATION_BASE_SHA"...HEAD
 git diff --stat "$IMPLEMENTATION_BASE_SHA"...HEAD
-git status --short
-git diff --name-only "$IMPLEMENTATION_BASE_SHA"...HEAD | \
-  grep -E '(^|/)evals/evals\.json$|(^|/)eval[^/]*/.*\.json$' && \
-  { echo "FAIL: P2 eval scope detected"; exit 1; } || true
+git diff --name-only
+git diff --cached --name-only
+git ls-files --others --exclude-standard
 ```
 
 Permitted implementation paths are exactly these prefixes and files:
@@ -37,6 +36,42 @@ skills/agent-driven-setup/scripts/verify-setup.sh
 ```
 
 Any other implementation-delta path requires an explicit scope decision before sign-off. The four planning documents on the review branch predate `IMPLEMENTATION_BASE_SHA` and are therefore excluded from this implementation delta.
+
+Apply the following guard to the union of committed, staged, unstaged, and untracked paths. It exits nonzero for every path outside the permitted list, including P2 eval files.
+
+```bash
+set -o pipefail
+is_allowed_implementation_path() {
+  case "$1" in
+    skills/agent-driven-setup/SKILL.md|\
+    skills/agent-driven-setup/requirements.txt|\
+    skills/agent-driven-setup/references/*|\
+    skills/agent-driven-setup/scripts/analyze-repo.sh|\
+    skills/agent-driven-setup/scripts/audit-contract.sh|\
+    skills/agent-driven-setup/scripts/run-target-probes.sh|\
+    skills/agent-driven-setup/scripts/test-scripts.sh|\
+    skills/agent-driven-setup/scripts/verify-setup.sh)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+{
+  git diff --name-only "$IMPLEMENTATION_BASE_SHA"...HEAD
+  git diff --name-only
+  git diff --cached --name-only
+  git ls-files --others --exclude-standard
+} | sort -u | while IFS= read -r path; do
+  test -z "$path" && continue
+  is_allowed_implementation_path "$path" || {
+    printf 'FAIL: out-of-scope path: %s\n' "$path" >&2
+    exit 1
+  }
+done
+```
 
 ---
 
@@ -120,6 +155,9 @@ bash skills/agent-driven-setup/scripts/test-scripts.sh
 git diff --name-only "$IMPLEMENTATION_BASE_SHA"...HEAD
 git diff --stat "$IMPLEMENTATION_BASE_SHA"...HEAD
 git status --short
+git diff --name-only
+git diff --cached --name-only
+git ls-files --others --exclude-standard
 ```
 
 The dependency-install command provisions the CI or caller environment only. It must not run inside, or install into, a target repository under test.
@@ -132,6 +170,6 @@ Integration passes only when all conditions are met:
 2. PyYAML `>=6.0,<7` is available in the caller or ephemeral CI environment; neither script installed it.
 3. `bash skills/agent-driven-setup/scripts/test-scripts.sh` passes every matrix scenario.
 4. Every acceptance criterion has the mapped automated fixture or the mapped documented procedure and retained execution evidence.
-5. The baseline-to-HEAD delta contains only allowed implementation paths and no P2 eval path.
+5. The baseline-to-HEAD, staged, unstaged, and untracked paths all pass `is_allowed_implementation_path`; no P2 eval path exists.
 6. `git status --short` is empty, apart from explicitly documented final evidence artifacts outside the repository.
 7. No new AI agent config file is created.
