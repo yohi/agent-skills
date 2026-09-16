@@ -902,6 +902,469 @@ assert temporary["probe"]["mutation_surface_id"] in surfaces
 PY
 }
 
+write_audit_contract() {
+  local path="$1"
+  local variant="${2:-valid}"
+
+  python3 - "$path" "$variant" <<'PY'
+import copy
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+variant = sys.argv[2]
+contract = {
+    "setup_contract_schema_version": 1,
+    "setup_intent": "Test deterministic contract auditing",
+    "setup_target": {
+        "cli_main": {
+            "target_type": "cli",
+            "canonical_source": {
+                "kind": "repository_path",
+                "value": "src",
+                "ref_mode": "not_applicable",
+            },
+            "runtime": {
+                "mode": "process",
+                "command": ["server"],
+                "safety": "read_only",
+            },
+        }
+    },
+    "complexity_triggers": [],
+    "configuration_branches": [
+        {"id": "main", "layers": [{"id": "choice", "kind": "choice"}]}
+    ],
+    "installation": {"cli_main": []},
+    "registration": {"cli_main": []},
+    "discovery": {"cli_main": []},
+    "activation": {"cli_main": []},
+    "verification": {
+        "targets": {
+            "cli_main": {
+                "target_type": "cli",
+                "items": [
+                    {
+                        "id": "cli.install",
+                        "phase": "installation",
+                        "target_type": "cli",
+                        "required_for_e2e": True,
+                        "required_capabilities": ["future_capability"],
+                        "blocked_by": [],
+                        "probe": {
+                            "kind": "command",
+                            "argv": ["printf", "ok"],
+                            "safety": "read_only",
+                        },
+                    }
+                ],
+            }
+        }
+    },
+    "handoffs": {},
+    "external_effects": {"mutation_surfaces": []},
+}
+
+if variant == "undefined-handoff":
+    contract["installation"]["cli_main"] = [
+        {
+            "id": "install-reference",
+            "reference": {"kind": "path", "path": "scripts/install.sh"},
+            "handoff_id": "missing-handoff",
+        }
+    ]
+elif variant == "cycle":
+    items = contract["verification"]["targets"]["cli_main"]["items"]
+    items[0]["blocked_by"] = ["cli.second"]
+    items.append(
+        {
+            "id": "cli.second",
+            "phase": "activation",
+            "target_type": "cli",
+            "required_for_e2e": True,
+            "blocked_by": ["cli.install"],
+            "probe": {
+                "kind": "command",
+                "argv": ["printf", "second"],
+                "safety": "read_only",
+            },
+        }
+    )
+elif variant == "invalid-safety":
+    contract["setup_target"]["cli_main"]["runtime"]["safety"] = "unsafe"
+    item = contract["verification"]["targets"]["cli_main"]["items"][0]
+    item["probe"]["safety"] = "unsafe"
+    contract["verification"]["targets"]["cli_main"]["items"].append(
+        {
+            "id": "cli.adapter",
+            "phase": "discovery",
+            "target_type": "cli",
+            "required_for_e2e": True,
+            "probe": {
+                "kind": "agent_action",
+                "action": "discovery",
+                "adapter": {
+                    "kind": "command",
+                    "argv": ["printf", "adapter"],
+                    "stdin": "empty",
+                    "safety": "unsafe",
+                },
+            },
+        }
+    )
+elif variant == "invalid-capabilities":
+    contract["verification"]["targets"]["cli_main"]["items"][0][
+        "required_capabilities"
+    ] = ["valid_capability", "valid_capability", "Invalid"]
+elif variant == "unknown-layer-kind":
+    contract["configuration_branches"][0]["layers"][0]["kind"] = "future_layer"
+elif variant != "valid":
+    raise ValueError(f"unknown fixture variant: {variant}")
+
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+}
+
+capture_audit() {
+  local report="$1"
+  shift
+  local status
+
+  if bash "$SCRIPT_DIR/audit-contract.sh" "$@" >"$report" 2>"$report.stderr"; then
+    status=0
+  else
+    status=$?
+  fi
+  printf '%s\n' "$status" >"$report.status"
+}
+
+check_audit_report_shape() {
+  local report="$1"
+
+  python3 - "$report" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert list(data) == [
+    "contract_discovery",
+    "observed_topology",
+    "discrepancies",
+    "schema_errors",
+    "next_actions",
+]
+assert isinstance(data["discrepancies"], list)
+assert "discrepancy" not in data
+PY
+}
+
+check_audit_explicit_contract_has_priority() {
+  local repo="$TEMP_DIR/audit-explicit-repo"
+  local report="$TEMP_DIR/audit-explicit.json"
+  mkdir -p "$repo"
+
+  write_audit_contract "$repo/explicit.md"
+  write_audit_contract "$repo/docs/agents.md"
+  write_audit_contract "$repo/docs/readme.md"
+  printf '%s\n' '<!-- agent-setup-contract: docs/agents.md -->' >"$repo/AGENTS.md"
+  printf '%s\n' '<!-- agent-setup-contract: docs/readme.md -->' >"$repo/README.md"
+
+  capture_audit "$report" --contract explicit.md "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 0
+assert data["contract_discovery"] == {
+    "status": "found",
+    "path": "explicit.md",
+    "source": "explicit",
+}
+assert data["schema_errors"] == []
+PY
+  check_audit_report_shape "$report"
+}
+
+check_audit_conflicting_repository_markers_are_ambiguous() {
+  local repo="$TEMP_DIR/audit-conflict-repo"
+  local report="$TEMP_DIR/audit-conflict.json"
+  mkdir -p "$repo"
+
+  write_audit_contract "$repo/docs/agents.md"
+  write_audit_contract "$repo/docs/readme.md"
+  printf '%s\n' '<!-- agent-setup-contract: docs/agents.md -->' >"$repo/AGENTS.md"
+  printf '%s\n' '<!-- agent-setup-contract: docs/readme.md -->' >"$repo/README.md"
+
+  capture_audit "$report" "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 0
+assert data["contract_discovery"] == {
+    "status": "ambiguous",
+    "source": "repository_declared",
+}
+assert data["schema_errors"] == []
+PY
+}
+
+check_audit_marker_scan_candidates_are_ambiguous() {
+  local repo="$TEMP_DIR/audit-candidates-repo"
+  local report="$TEMP_DIR/audit-candidates.json"
+  mkdir -p "$repo"
+
+  write_audit_contract "$repo/SETUP-CONTRACT.md"
+  write_audit_contract "$repo/docs/one.md"
+
+  capture_audit "$report" "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 0
+assert data["contract_discovery"] == {
+    "status": "ambiguous",
+    "source": "marker_scan",
+}
+assert data["schema_errors"] == []
+PY
+}
+
+check_audit_not_found_is_deterministic() {
+  local repo="$TEMP_DIR/audit-not-found-repo"
+  local report="$TEMP_DIR/audit-not-found.json"
+  mkdir -p "$repo"
+
+  capture_audit "$report" "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 0
+assert data["contract_discovery"] == {"status": "not_found", "source": "none"}
+assert data["schema_errors"] == []
+PY
+  check_audit_report_shape "$report"
+}
+
+check_audit_rejects_escaping_declared_path() {
+  local repo="$TEMP_DIR/audit-escaping-repo"
+  local report="$TEMP_DIR/audit-escaping.json"
+  mkdir -p "$repo"
+  write_audit_contract "$repo/SETUP-CONTRACT.md"
+  printf '%s\n' '<!-- agent-setup-contract: ../contract.md -->' >"$repo/AGENTS.md"
+
+  capture_audit "$report" "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 2
+assert data["contract_discovery"] == {
+    "status": "contract_error",
+    "source": "repository_declared",
+}
+assert data["schema_errors"]
+assert any(".." in error["message"] for error in data["schema_errors"])
+PY
+}
+
+check_audit_rejects_malformed_explicit_frontmatter() {
+  local repo="$TEMP_DIR/audit-frontmatter-repo"
+  local report="$TEMP_DIR/audit-frontmatter.json"
+  mkdir -p "$repo"
+  printf '%s\n' '# no frontmatter' >"$repo/contract.md"
+
+  capture_audit "$report" --contract contract.md "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 2
+assert data["contract_discovery"] == {
+    "status": "contract_error",
+    "source": "explicit",
+}
+assert data["schema_errors"]
+PY
+}
+
+check_audit_rejects_undefined_handoff() {
+  local repo="$TEMP_DIR/audit-handoff-repo"
+  local report="$TEMP_DIR/audit-handoff.json"
+  mkdir -p "$repo"
+  write_audit_contract "$repo/contract.md" undefined-handoff
+
+  capture_audit "$report" --contract contract.md "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 2
+assert data["contract_discovery"]["status"] == "found"
+assert any(
+    error["code"] == "unresolved_handoff_id"
+    for error in data["schema_errors"]
+)
+PY
+}
+
+check_audit_rejects_blocked_by_cycle() {
+  local repo="$TEMP_DIR/audit-cycle-repo"
+  local report="$TEMP_DIR/audit-cycle.json"
+  mkdir -p "$repo"
+  write_audit_contract "$repo/contract.md" cycle
+
+  capture_audit "$report" --contract contract.md "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 2
+assert any(error["code"] == "blocked_by_cycle" for error in data["schema_errors"])
+PY
+}
+
+check_audit_validates_all_safety_enums_without_execution() {
+  local repo="$TEMP_DIR/audit-safety-repo"
+  local report="$TEMP_DIR/audit-safety.json"
+  mkdir -p "$repo"
+  write_audit_contract "$repo/contract.md" invalid-safety
+
+  capture_audit "$report" --contract contract.md "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 2
+errors = data["schema_errors"]
+assert sum(error["code"] == "invalid_safety" for error in errors) >= 3
+assert all("argv" not in error["message"] for error in errors if error["code"] == "invalid_safety")
+PY
+}
+
+check_audit_validates_capability_ids_without_matrix_lookup() {
+  local repo="$TEMP_DIR/audit-capability-repo"
+  local report="$TEMP_DIR/audit-capability.json"
+  mkdir -p "$repo"
+  write_audit_contract "$repo/contract.md" invalid-capabilities
+
+  capture_audit "$report" --contract contract.md "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 2
+errors = data["schema_errors"]
+assert any(error["code"] == "invalid_capability_id" for error in errors)
+assert any(error["code"] == "duplicate_required_capability" for error in errors)
+PY
+}
+
+check_audit_rejects_unknown_layer_kind() {
+  local repo="$TEMP_DIR/audit-layer-kind-repo"
+  local report="$TEMP_DIR/audit-layer-kind.json"
+  mkdir -p "$repo"
+  write_audit_contract "$repo/contract.md" unknown-layer-kind
+
+  capture_audit "$report" --contract contract.md "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 2
+assert any(error["code"] == "invalid_layer_kind" for error in data["schema_errors"])
+PY
+}
+
+check_audit_writes_both_formats_only_outside_target() {
+  local repo="$TEMP_DIR/audit-both-repo"
+  local output_dir="$TEMP_DIR/audit-output"
+  local report="$TEMP_DIR/audit-both.stdout"
+  mkdir -p "$repo" "$output_dir"
+  write_audit_contract "$repo/contract.md"
+
+  capture_audit "$report" --format both --output-dir "$output_dir" --contract contract.md "$repo"
+  python3 - "$report.status" "$output_dir/audit-report.json" "$output_dir/audit-report.md" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+assert int(Path(sys.argv[1]).read_text()) == 0
+json_report = Path(sys.argv[2])
+markdown_report = Path(sys.argv[3])
+assert json_report.is_file()
+assert markdown_report.is_file()
+data = json.loads(json_report.read_text(encoding="utf-8"))
+assert data["contract_discovery"]["status"] == "found"
+assert "contract_discovery" in markdown_report.read_text(encoding="utf-8")
+PY
+}
+
+check_audit_rejects_target_internal_output_dir() {
+  local repo="$TEMP_DIR/audit-internal-output-repo"
+  local report="$TEMP_DIR/audit-internal-output.stdout"
+  mkdir -p "$repo"
+  write_audit_contract "$repo/contract.md"
+
+  capture_audit "$report" --format both --output-dir "$repo/reports" --contract contract.md "$repo"
+  python3 - "$report.status" "$repo/reports" <<'PY'
+import sys
+from pathlib import Path
+
+assert int(Path(sys.argv[1]).read_text()) == 2
+assert not Path(sys.argv[2]).exists()
+PY
+}
+
+check_audit_reports_dependency_unavailable_without_installing() {
+  local repo="$TEMP_DIR/audit-dependency-repo"
+  local fake_bin="$TEMP_DIR/audit-fake-bin"
+  local report="$TEMP_DIR/audit-dependency.json"
+  local pip_called="$TEMP_DIR/audit-pip-called"
+  mkdir -p "$repo" "$fake_bin"
+  write_audit_contract "$repo/contract.md"
+
+  cat >"$fake_bin/python3" <<'PYTHON'
+#!/bin/sh
+if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
+  touch "${AUDIT_PIP_CALLED:?}"
+fi
+exit 1
+PYTHON
+  chmod +x "$fake_bin/python3"
+  AUDIT_PIP_CALLED="$pip_called" PATH="$fake_bin:$PATH" \
+    capture_audit "$report" --contract contract.md "$repo"
+
+  python3 - "$report.status" "$report.stderr" "$pip_called" <<'PY'
+import sys
+from pathlib import Path
+
+assert int(Path(sys.argv[1]).read_text()) == 3
+stderr = Path(sys.argv[2]).read_text(encoding="utf-8")
+assert "dependency_unavailable" in stderr
+assert not Path(sys.argv[3]).exists()
+PY
+}
+
 run_test "eval manifest parses" check_eval_manifest
 run_test "analysis detects nested scripts and lockfiles" check_analysis
 run_test "analysis uses package runner for npm tests" check_analysis_uses_package_runner_for_tests
@@ -929,6 +1392,20 @@ run_test "analysis reports invalid repository paths" check_invalid_repo_path
 run_test "verification retries after analysis failure without stale cache" check_analysis_failure_does_not_poison_cache
 run_test "Setup Contract requires runtime and process runtime fields" check_setup_contract_required_runtime_fields
 run_test "Setup Contract v1 MCP fixture validates" check_setup_contract_fixture
+run_test "audit gives explicit contract priority" check_audit_explicit_contract_has_priority
+run_test "audit rejects conflicting repository markers" check_audit_conflicting_repository_markers_are_ambiguous
+run_test "audit rejects ambiguous marker scan" check_audit_marker_scan_candidates_are_ambiguous
+run_test "audit reports deterministic not-found discovery" check_audit_not_found_is_deterministic
+run_test "audit rejects escaping declared paths" check_audit_rejects_escaping_declared_path
+run_test "audit rejects malformed explicit frontmatter" check_audit_rejects_malformed_explicit_frontmatter
+run_test "audit rejects undefined handoffs" check_audit_rejects_undefined_handoff
+run_test "audit rejects blocked-by cycles" check_audit_rejects_blocked_by_cycle
+run_test "audit validates all safety enums without execution" check_audit_validates_all_safety_enums_without_execution
+run_test "audit validates capability IDs without matrix lookup" check_audit_validates_capability_ids_without_matrix_lookup
+run_test "audit rejects unknown layer kinds" check_audit_rejects_unknown_layer_kind
+run_test "audit writes both formats outside target" check_audit_writes_both_formats_only_outside_target
+run_test "audit rejects target-internal output directories" check_audit_rejects_target_internal_output_dir
+run_test "audit reports missing PyYAML without installing" check_audit_reports_dependency_unavailable_without_installing
 
 if (( failures > 0 )); then
   exit 1
