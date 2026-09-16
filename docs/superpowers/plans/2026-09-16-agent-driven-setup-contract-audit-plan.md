@@ -17,7 +17,7 @@
 - All target paths are repository-relative and may not escape the target root.
 - `configuration_branches[*].layers[*].kind` uses the v1 closed enum; unknown kinds are schema errors.
 - Spec 1 validates `required_capabilities` ID syntax and item-local uniqueness without loading the Spec 2 capability matrix or determining availability.
-- `command.safety` and `agent_action.adapter.safety` use `read_only|mutating|unknown`; `null` and out-of-enum values are schema errors. Spec 1 validates only their Contract shape and enum, while the Design-defined Probe Safety Policy v1 is classified and finally enforced by `run-target-probes.sh`. Its `--classify-only` interface is the only dry-run reuse mechanism; Spec 1 does not duplicate the classifier.
+- `command.safety`, `agent_action.adapter.safety`, and process runtime `runtime.safety` use `read_only|mutating|unknown`; `null` and out-of-enum values are schema errors. Spec 1 validates only their Contract shape and enum, while the Design-defined Probe Safety Policy v1 is classified and finally enforced by `run-target-probes.sh`. Its `--classify-only` interface is the only dry-run reuse mechanism; Spec 1 does not duplicate the classifier.
 - The existing simple-repository path remains unchanged.
 - Do not create AI agent configuration files.
 
@@ -52,19 +52,19 @@
 
 **Produces:** Contract v1 reference, valid MCP fixture, and one-line dependency file containing `PyYAML>=6.0,<7`.
 
-**Interfaces:** `setup_contract_schema_version` is integer `1`; target IDs and verification target keys match; layer and mutation-surface discriminators use the exact v1 closed vocabulary; `required_capabilities` contains only unique item-local IDs matching `[a-z][a-z0-9_-]*`; Spec 1 does not perform capability-matrix lookup; PyYAML missing is `dependency_unavailable` / exit 3.
+**Interfaces:** `setup_contract_schema_version` is integer `1`; target IDs and verification target keys match; layer and mutation-surface discriminators use the exact v1 closed vocabulary; `required_capabilities` contains only unique item-local IDs matching `[a-z][a-z0-9_-]*`; process runtime has `runtime.command` and `runtime.safety` only when `runtime.mode: process`; `runtime.safety` uses `read_only|mutating|unknown` and is a declaration, not execution permission; Spec 1 does not perform capability-matrix lookup; PyYAML missing is `dependency_unavailable` / exit 3.
 
-**Safety boundary:** `command.safety` and `agent_action.adapter.safety` are required declarations with the enum `read_only|mutating|unknown`; `null` and out-of-enum values are schema errors. `temporary_fixture` remains limited to MCP `representative_tool_call` and requires an `external` / `snapshot: required` / `cleanup_required: true` mutation surface for Contract validity, but P1 does not automatically execute that mode. Spec 1 rejects malformed safety fields but does not classify argv or authorize execution. The Design-defined effective safety policy, `--classify-only` reuse, and process-start enforcement are Spec 2 responsibilities.
+**Safety boundary:** `command.safety`, `agent_action.adapter.safety`, and process runtime `runtime.safety` are required declarations with the enum `read_only|mutating|unknown` when their corresponding process argv exists; `null` and out-of-enum values are schema errors. `temporary_fixture` remains limited to MCP `representative_tool_call` and requires an `external` / `snapshot: required` / `cleanup_required: true` mutation surface for Contract validity, but P1 does not automatically execute that mode. Spec 1 rejects malformed safety fields but does not classify argv or authorize execution. The Design-defined effective safety policy, `--classify-only` reuse, and process-start enforcement are Spec 2 responsibilities.
 
 **RED:**
-- [ ] Make the RED setup self-contained: generate a minimal valid Contract mapping in a temporary fixture inside the test, copy it, and remove `setup_target.mcp_main.runtime` from the copy. Do not depend on the fixture or schema files created in GREEN.
+- [ ] Make the RED setup self-contained: generate a minimal valid Contract mapping in a temporary fixture inside the test, copy it, remove `setup_target.mcp_main.runtime` from one copy, and remove `runtime.command` or `runtime.safety` from a `runtime.mode: process` copy. Do not depend on the fixture or schema files created in GREEN.
 - [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh`.
-- [ ] Confirm the intended failure is rejection of the missing `runtime` field; a file-not-found or missing-fixture failure is a RED setup failure, not the expected behavior failure.
+- [ ] Confirm the intended failures are rejection of the missing `runtime` field and missing process `runtime.command` / `runtime.safety`; a file-not-found or missing-fixture failure is a RED setup failure, not the expected behavior failure.
 
 **GREEN:**
 - [ ] Write the schema reference as a field table, including requiredness, null meaning, IDs, path bases, discriminators, reference semantics, and exact discovery marker `<!-- agent-setup-contract: path -->`.
-- [ ] Add the complete MCP fixture and `requirements.txt`.
-- [ ] Extend the validation helper to load the fixture with `yaml.safe_load` and assert all required v1 fields, including `required_capabilities` ID syntax/item-local uniqueness, valid `mcp_request` safety values, `command.safety` / `agent_action.adapter.safety` enum values, and an eligible temporary mutation surface with `external` scope, `snapshot: required`, and `cleanup_required: true`.
+- [ ] Add the complete MCP fixture, including the Design-defined exact safe runtime command `agent-setup-mcp-stdio-readonly` with `runtime.safety: read_only`, and `requirements.txt`.
+- [ ] Extend the validation helper to load the fixture with `yaml.safe_load` and assert all required v1 fields, including `required_capabilities` ID syntax/item-local uniqueness, valid `mcp_request` safety values, `command.safety` / `agent_action.adapter.safety` / process `runtime.safety` enum values, process-only `runtime.command` / `runtime.safety` requiredness, and an eligible temporary mutation surface with `external` scope, `snapshot: required`, and `cleanup_required: true`.
 - [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh` and confirm the fixture test passes.
 
 **REFACTOR:**
@@ -87,10 +87,10 @@
 
 **Produces:** `audit-contract.sh [--contract <repo-relative-path>] [--format json|markdown|both] [--output-dir <target-external-dir>] <repo-path>` with `contract_discovery`, `schema_errors`, and exit codes 0, 2, 3.
 
-**Interfaces:** explicit path has priority; declaration markers are standalone exact lines in root `AGENTS.md` then `README.md`; marker scan considers only `SETUP-CONTRACT.md` and `docs/**/*.md`; `required_capabilities` validation stops at ID syntax and item-local uniqueness and never looks up Spec 2 definitions; `command.safety` and `agent_action.adapter.safety` validation stops at the exact enum and does not classify or execute argv; report key is always `discrepancies`.
+**Interfaces:** explicit path has priority; declaration markers are standalone exact lines in root `AGENTS.md` then `README.md`; marker scan considers only `SETUP-CONTRACT.md` and `docs/**/*.md`; `required_capabilities` validation stops at ID syntax and item-local uniqueness and never looks up Spec 2 definitions; `command.safety`, `agent_action.adapter.safety`, and process runtime `runtime.safety` validation stops at the exact enum and does not classify or execute argv; report key is always `discrepancies`.
 
 **RED:**
-- [ ] Add fixtures for an explicit contract, conflicting `AGENTS.md`/`README.md` markers, two marker-scan candidates, an escaping `../contract.md` path, undefined `handoff_id`, cyclic `blocked_by`, and invalid `command.safety` / `agent_action.adapter.safety` values.
+- [ ] Add fixtures for an explicit contract, conflicting `AGENTS.md`/`README.md` markers, two marker-scan candidates, an escaping `../contract.md` path, undefined `handoff_id`, cyclic `blocked_by`, and invalid `command.safety` / `agent_action.adapter.safety` / process `runtime.safety` values.
 - [ ] Run `bash skills/agent-driven-setup/scripts/test-scripts.sh`.
 - [ ] Confirm failures because `audit-contract.sh` does not exist and the expected JSON fields cannot be read.
 
@@ -181,18 +181,18 @@
 
 **Depends on:** Tasks 1 through 4.
 
-**Consumes:** Contract v1, audit grammar, discovery protocol, trigger output, and the Design-defined Probe Safety Policy v1 support boundary.
+**Consumes:** Contract v1, audit grammar, discovery protocol, trigger output, the Design-defined Probe Safety Policy v1 support boundary, and the process runtime safety declaration.
 
 **Produces:** documentation-only enhanced workflow that preserves the simple-repository path.
 
-**Interfaces:** no runtime interface changes; complex repositories use Contract extraction then audit; `not_found` returns to extraction and `ambiguous` requires semantic review. This plan documents the safety boundary but does not implement or duplicate the Spec 2 classifier; P1 automatic verification is limited to supported read-only probes, while Contract-defined MCP `temporary_fixture` is handed off or reported `safety_blocked`.
+**Interfaces:** no script executor interface changes in this task; the Setup Contract process runtime now declares `runtime.command` and `runtime.safety`, while complex repositories use Contract extraction then audit; `not_found` returns to extraction and `ambiguous` requires semantic review. This plan documents the safety boundary but does not implement or duplicate the Spec 2 classifier; P1 automatic verification is limited to supported read-only command probes and the concrete MCP runtime fixture defined by the Design, while Skill `agent_action` discovery / activation is handed off and Contract-defined MCP `temporary_fixture` is handed off or reported `safety_blocked`.
 
 **RED:**
-- [ ] Add documentation assertions for the exact Contract marker syntax, `audit-contract.sh` grammar, mutation-surface investigation, Probe Safety Policy v1 as the Spec 2 authority, `run-target-probes.sh --classify-only` reuse, P1 `temporary_fixture` unsupported behavior, probe safety declaration versus execution authority, and simple-path preservation.
+- [ ] Add documentation assertions for the exact Contract marker syntax, `audit-contract.sh` grammar, mutation-surface investigation, process `runtime.safety` shape, Probe Safety Policy v1 as the Spec 2 authority, `run-target-probes.sh --classify-only` reuse, P1 Skill discovery / activation handoff, P1 `temporary_fixture` unsupported behavior, probe safety declaration versus execution authority, and simple-path preservation.
 - [ ] Run the suite and confirm the header/content assertions fail before documentation is updated.
 
 **GREEN:**
-- [ ] Document trigger evidence, Contract placement, discovery marker, target type, configuration branches, mutation surfaces, the Probe Safety Policy v1 cross-reference, the `--classify-only` reuse boundary, P1 `temporary_fixture` handoff/`safety_blocked` behavior, and the rule that safety declarations do not authorize probe execution.
+- [ ] Document trigger evidence, Contract placement, discovery marker, target type, configuration branches, mutation surfaces, process runtime safety, the Probe Safety Policy v1 cross-reference, the `--classify-only` reuse boundary, P1 Skill discovery / activation handoff, P1 `temporary_fixture` handoff/`safety_blocked` behavior, and the rule that safety declarations do not authorize probe execution.
 - [ ] Document the enhanced flow without changing the existing standard flow.
 - [ ] Run the suite and confirm all documentation assertions pass.
 
