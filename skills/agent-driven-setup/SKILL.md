@@ -284,11 +284,58 @@ is impossible, state the conditions explicitly.
 | Adding `npm run agent:setup` preflight to a small repo with existing scripts | Agent inspection is sufficient; avoid wrapper bloat. |
 | Presenting `export KEY='<value>'` as the primary secret input | Prefer non-echo terminal input or credential store. |
 
+## Enhanced workflow for complex repositories
+
+When `analyze-repo.sh` emits complexity triggers, the repository has more than
+one configuration surface. Use the Setup Contract v1 workflow instead of the
+standard heuristic flow. The Contract is the YAML frontmatter of a single
+Markdown file; the Markdown body is explanatory only.
+
+Discover the Contract with a marker in `AGENTS.md` or `README.md`:
+
+```text
+<!-- agent-setup-contract: path/to/contract.md -->
+```
+
+Run the audit:
+
+```bash
+bash /mnt/skills/user/agent-driven-setup/scripts/audit-contract.sh [repo-path]
+```
+
+The audit emits `contract_discovery`, `observed_topology`, `discrepancies`,
+`schema_errors`, and `next_actions`. It performs no target-repository writes.
+
+The Contract records setup intent, target type, configuration branches,
+mutation surfaces (`external_effects`), process runtime declarations, and
+verification probes. For process runtime targets, `runtime.command` and
+`runtime.safety` are both required; `runtime.safety` is `read_only`,
+`mutating`, or `unknown`. Safety declarations in the Contract are shape checks
+only and do not authorize probe execution. The effective Probe Safety Policy v1
+and argv classifier are owned by `run-target-probes.sh`; for dry-run reuse call
+`run-target-probes.sh --classify-only`.
+
+Spec 1 validates Contract shape but hands off items it cannot execute. P1
+automatic verification is limited to supported read-only command probes and the
+concrete MCP runtime fixture defined by the Design; everything else is handed off
+or reported as `safety_blocked`.
+
+- `agent_action` probes with `action: discovery` or `action: activation` are
+  handed off to Skill discovery / activation.
+- `mcp_request` probes that reference a Contract-defined `temporary_fixture`
+  surface are handed off or reported as `safety_blocked`.
+
+When `analyze-repo.sh` reports no complexity triggers, continue with the standard
+simple-repository flow above.
+See [references/setup-approach-decision-guide.md](references/setup-approach-decision-guide.md)
+for the full enhanced workflow and [references/setup-contract-schema.md](references/setup-contract-schema.md)
+for the normative schema.
 ## Reference files
 
 - [references/repository-investigation-checklist.md](references/repository-investigation-checklist.md) — what to inspect before changing anything.
-- [references/setup-approach-decision-guide.md](references/setup-approach-decision-guide.md) — how to choose a setup architecture.
+- [references/setup-approach-decision-guide.md](references/setup-approach-decision-guide.md) — how to choose a setup architecture, including the enhanced workflow.
 - [references/agent-capability-matrix.md](references/agent-capability-matrix.md) — generic capabilities and concrete tool mappings.
 - [references/secret-handling-patterns.md](references/secret-handling-patterns.md) — safe secret input, redaction, and verification.
 - [references/verification-patterns.md](references/verification-patterns.md) — dry-run, local mode, smoke tests, and failure reporting.
+- [references/setup-contract-schema.md](references/setup-contract-schema.md) — normative Setup Contract v1 schema.
 - [references/human-entry-point-template.md](references/human-entry-point-template.md) — paste-ready README section template.

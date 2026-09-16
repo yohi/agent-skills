@@ -1788,6 +1788,58 @@ PY
 }
 
 
+check_documentation_contract_marker_syntax() {
+  grep -q '<!-- agent-setup-contract:' "$SKILL_DIR/references/setup-contract-schema.md" || return 1
+  grep -q 'Paths are normalized repository-relative paths' "$SKILL_DIR/references/setup-contract-schema.md" || return 1
+}
+
+check_documentation_audit_grammar() {
+  grep -q 'audit-contract.sh' "$SKILL_DIR/SKILL.md" || return 1
+  grep -q 'contract_discovery' "$SKILL_DIR/SKILL.md" || return 1
+  grep -q 'schema_errors' "$SKILL_DIR/SKILL.md" || return 1
+}
+
+check_documentation_mutation_surface_investigation() {
+  grep -q 'mutation_surfaces' "$SKILL_DIR/references/setup-contract-schema.md" || return 1
+  grep -q 'external_effects' "$SKILL_DIR/SKILL.md" || return 1
+}
+
+check_documentation_process_runtime_safety_shape() {
+  grep -q 'runtime.safety' "$SKILL_DIR/references/setup-contract-schema.md" || return 1
+  grep -q 'read_only|mutating|unknown' "$SKILL_DIR/references/setup-contract-schema.md" || return 1
+  grep -q 'process only' "$SKILL_DIR/references/setup-contract-schema.md" || return 1
+}
+
+check_documentation_probe_safety_policy_v1_authority() {
+  grep -q 'Probe Safety Policy v1' "$SKILL_DIR/SKILL.md" || return 1
+  grep -q 'run-target-probes.sh' "$SKILL_DIR/SKILL.md" || return 1
+}
+
+check_documentation_classify_only_reuse() {
+  grep -qF -- '--classify-only' "$SKILL_DIR/SKILL.md" || return 1
+  grep -q 'run-target-probes.sh' "$SKILL_DIR/SKILL.md" || return 1
+}
+
+check_documentation_p1_skill_handoff() {
+  grep -q 'agent_action' "$SKILL_DIR/SKILL.md" || return 1
+  grep -q 'discovery.*activation\|activation.*discovery' "$SKILL_DIR/SKILL.md" || return 1
+}
+
+check_documentation_p1_temporary_fixture_handoff() {
+  grep -q 'temporary_fixture' "$SKILL_DIR/SKILL.md" || return 1
+  grep -q 'safety_blocked' "$SKILL_DIR/SKILL.md" || return 1
+}
+
+check_documentation_safety_declaration_not_execution_authority() {
+  grep -q 'Safety declarations never authorize execution' "$SKILL_DIR/references/setup-contract-schema.md" || return 1
+}
+
+check_documentation_simple_path_preserved() {
+  grep -qE 'simple[- ]repository' "$SKILL_DIR/SKILL.md" || return 1
+  grep -q 'analyze-repo.sh' "$SKILL_DIR/SKILL.md" || return 1
+  grep -q 'verify-setup.sh' "$SKILL_DIR/SKILL.md" || return 1
+}
+
 run_test "eval manifest parses" check_eval_manifest
 run_test "analysis detects nested scripts and lockfiles" check_analysis
 run_test "analysis uses package runner for npm tests" check_analysis_uses_package_runner_for_tests
@@ -1836,6 +1888,16 @@ run_test "audit rejects target-internal output directories" check_audit_rejects_
 run_test "audit reports missing PyYAML without installing" check_audit_reports_dependency_unavailable_without_installing
 run_test "audit reports static topology discrepancies" check_audit_reports_static_topology
 run_test "analysis emits evidence-only complexity triggers" check_analysis_emits_complexity_triggers
+run_test "documentation asserts exact Contract marker syntax" check_documentation_contract_marker_syntax
+run_test "documentation asserts audit grammar" check_documentation_audit_grammar
+run_test "documentation asserts mutation-surface investigation" check_documentation_mutation_surface_investigation
+run_test "documentation asserts process runtime.safety shape" check_documentation_process_runtime_safety_shape
+run_test "documentation asserts Probe Safety Policy v1 authority" check_documentation_probe_safety_policy_v1_authority
+run_test "documentation asserts --classify-only reuse" check_documentation_classify_only_reuse
+run_test "documentation asserts P1 Skill discovery/activation handoff" check_documentation_p1_skill_handoff
+run_test "documentation asserts P1 temporary_fixture handoff" check_documentation_p1_temporary_fixture_handoff
+run_test "documentation asserts safety declaration is not execution authority" check_documentation_safety_declaration_not_execution_authority
+run_test "documentation asserts simple-path preservation" check_documentation_simple_path_preserved
 
 if (( failures > 0 )); then
   exit 1

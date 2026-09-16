@@ -116,3 +116,112 @@ cases. Adding a wrapper only creates a second thing to maintain.
   the repo. Always preserve a manual fallback.
 - **Wrapper bloat**: Do not add `agent:setup`, `scripts/agent-setup.js`, or
   similar wrappers for small repos whose existing scripts are already clear.
+
+## Enhanced workflow for complex repositories
+
+Some repositories expose enough complexity that a simple README → installer handoff
+is not enough. In those cases use the Setup Contract v1 workflow instead of adding
+a wrapper script.
+
+Use the enhanced workflow when `analyze-repo.sh` reports complexity triggers such
+as an MCP runtime (`mcp.json`), multiple configuration writers, or webhook URLs.
+These triggers are evidence that the repository has more than one configuration
+surface and that setup should be driven by an explicit Contract rather than by
+heuristic command detection.
+
+### Contract placement and discovery marker
+
+The Contract is the YAML frontmatter of a single Markdown file. The Markdown body
+is explanatory only. Place the Contract file at one of these locations:
+
+- `SETUP-CONTRACT.md` at the repository root
+- A Markdown file under `docs/`
+
+Discovery starts from a marker in the repository root `AGENTS.md` or `README.md`:
+
+```text
+<!-- agent-setup-contract: path/to/contract.md -->
+```
+
+The marker must be a standalone line and the path must be a normalized
+repository-relative path. Absolute paths, `..` components, and symlink escapes are
+schema errors. The exact marker syntax is `<!-- agent-setup-contract:` followed
+by the path and `-->`. If the marker is absent, the auditor scans candidate files
+under the root and `docs/`.
+
+### Discovery outcomes and next steps
+
+`audit-contract.sh` reports one of these discovery states:
+
+- `found`: a single Contract was discovered and its frontmatter is syntactically
+  valid. Continue with schema and topology validation.
+- `not_found`: no Contract was discovered. Return to the repository investigation
+  / extraction step (the simple-repository path): run `analyze-repo.sh` and
+  `verify-setup.sh` and use the standard approach taxonomy above.
+- `ambiguous`: more than one marker or more than one candidate file was found, or
+  the markers in `AGENTS.md` and `README.md` disagree. Stop and perform semantic
+  review with the repository owner before continuing.
+- `contract_error`: the declared Contract path is malformed, escapes the target
+  root, or its frontmatter is not valid YAML. Fix the Contract and rerun the audit.
+
+### What the Contract captures
+
+The Contract records the setup intent, target type, configuration branches,
+mutation surfaces, process runtime safety, verification probes, and handoffs.
+Target types include `skill`, `mcp`, `plugin`, `hook`, `cli`, `service`, and
+`other/custom`. Each target declares its canonical source and runtime mode.
+
+Process runtime targets declare both `runtime.command` and `runtime.safety`. The
+safety enum is `read_only`, `mutating`, or `unknown`;
+  it is a declaration, not an
+execution permit. Other runtime modes must not carry `command` or `safety`.
+
+Configuration branches list layers in order. Each layer has a closed v1 `kind` such
+as `choice`, `installer`, `cli`, `env`, `settings`, `generated_config`,
+`registration`, `discovery`, `runtime_consumer`, `activation`,
+`representative_operation`, or `verification`. Unknown kinds are schema errors.
+
+Mutation surfaces live under `external_effects.mutation_surfaces`. Each surface
+declares its scope (`repository`, `user_local`, `global`, or `external`), kind,
+value, snapshot policy, and whether cleanup is required. Investigate these surfaces
+before running any probe that could touch them.
+
+### Probe Safety Policy v1 boundary
+
+The Contract validates the shape of every probe and the safety enum, but safety
+declarations do not authorize probe execution. The effective Probe Safety Policy
+v1 and the argv classifier are owned by `run-target-probes.sh`. `audit-contract.sh`
+performs no target-repository writes and never executes a probe.
+
+For dry-run classification reuse the executor's `--classify-only` interface. Do
+not reimplement the classifier inside `audit-contract.sh` or duplicate the policy
+in the Contract schema document.
+
+### P1 handoffs
+
+Some verification items must be handled outside Spec 1:
+
+- `agent_action` probes with `action: discovery` or `action: activation` are
+  handed off to Skill discovery / activation. Spec 1 validates the adapter shape
+  but does not perform the discovery.
+- `mcp_request` probes that reference a Contract-defined `temporary_fixture`
+  surface are handed off or reported as `safety_blocked` in P1. P1 accepts the
+  surface declaration but does not automatically create or clean up the fixture.
+
+### Simple-repository path is preserved
+
+When `audit-contract.sh` returns `not_found`, or when `analyze-repo.sh` reports no
+complexity triggers, continue using the existing standard flow: choose an approach
+from the taxonomy above, create the Human entry point and Agent protocol, then run
+`verify-setup.sh`. Do not force a Contract onto a repository whose existing
+scripts and docs are already sufficient.
+
+### Anti-patterns for the enhanced flow
+
+- Creating a Contract for a repository that already has a clear README → installer
+  path.
+- Treating `runtime.safety: read_only` as permission to run a probe without the
+  executor's policy check.
+- Duplicating the Probe Safety Policy v1 or `--classify-only` logic in the Contract
+  schema or audit script.
+- Running `audit-contract.sh` with an output directory inside the target repository.
