@@ -215,9 +215,58 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
   [[ -z "$default_branch" ]] && default_branch="main"
 fi
 
+# ── Complexity triggers (evidence-only) ───────────────────────────────────
+# Each trigger records a deterministic, read-only observation; the list never
+# mechanically selects a workflow.
+complexity_ids=""
+complexity_evidence=""
+complexity_notes=""
+
+append_trigger() {
+  local id="$1" evidence="$2" note="$3"
+  complexity_ids+="$id"$'\n'
+  complexity_evidence+="$evidence"$'\n'
+  complexity_notes+="$note"$'\n'
+}
+
+# mcp-runtime: a declared MCP server runtime config exists.
+mcp_config=""
+for candidate in "mcp.json" ".mcp.json"; do
+  if file_exists "$candidate"; then
+    mcp_config="$candidate"
+    break
+  fi
+done
+if [[ -n "$mcp_config" ]]; then
+  append_trigger "mcp-runtime" "$mcp_config" "An MCP server runtime is configured; starting and observing it requires an enhanced workflow."
+fi
+
+# multiple-config-writers: two or more distinct config source files exist.
+config_writers=""
+for candidate in ".env.example" ".env.sample" "config/settings.yaml" "config/settings.yml" "setup.cfg" ".npmrc"; do
+  if file_exists "$candidate"; then
+    config_writers+="$candidate"$'\n'
+  fi
+done
+config_writer_count="$(printf '%s' "$config_writers" | grep -c '^' 2>/dev/null || true)"
+if (( config_writer_count >= 2 )); then
+  writer_evidence="$(printf '%s' "$config_writers" | sed '/^$/d' | paste -sd, -)"
+  append_trigger "multiple-config-writers" "$writer_evidence" "Multiple distinct config sources exist; keeping them in sync adds setup complexity."
+fi
+
+# webhook-url: an existing asset references a webhook delivery endpoint.
+webhook_file=""
+webhook_files=( README.md AGENTS.md mcp.json .mcp.json *.json *.yaml *.yml *.toml .env.example .env.sample config/settings.yaml config/settings.yml docs/*.md )
+for f in "${webhook_files[@]}"; do
+  [[ -f "$f" ]] && grep -Eq 'https?://[^[:space:]"]*webhook[^[:space:]"]*' "$f" && webhook_file="$f" && break
+done
+if [[ -n "$webhook_file" ]]; then
+  append_trigger "webhook-url" "$webhook_file" "A webhook delivery endpoint is referenced; setup must account for it."
+fi
+
 # ── Assemble JSON ────────────────────────────────────────────────────────────
 
-python3 - "$package_manager" "$install_command" "$test_command" "$build_command" "$lint_command" "$(encode_list "$lockfiles")" "$has_github_actions" "$has_ci_other" "$has_docker" "$has_env_example" "$has_agents_md" "$has_claude_md" "$has_opencode" "$readme_path" "$(encode_list "$install_docs")" "$git_remote" "$default_branch" <<'PY'
+python3 - "$package_manager" "$install_command" "$test_command" "$build_command" "$lint_command" "$(encode_list "$lockfiles")" "$has_github_actions" "$has_ci_other" "$has_docker" "$has_env_example" "$has_agents_md" "$has_claude_md" "$has_opencode" "$readme_path" "$(encode_list "$install_docs")" "$git_remote" "$default_branch" "$(encode_list "$complexity_ids")" "$(encode_list "$complexity_evidence")" "$(encode_list "$complexity_notes")" <<'PY'
 import sys, json
 
 def parse_list(s):
@@ -234,6 +283,14 @@ def boolify(s):
     has_agents_md, has_claude_md, has_opencode, readme_path, install_docs_enc,
     git_remote, default_branch
 ) = sys.argv[1:18]
+
+complexity_ids = parse_list(sys.argv[18]) if len(sys.argv) > 18 else []
+complexity_evidence = parse_list(sys.argv[19]) if len(sys.argv) > 19 else []
+complexity_notes = parse_list(sys.argv[20]) if len(sys.argv) > 20 else []
+complexity_triggers = [
+    {"id": i, "evidence": e, "note": n}
+    for i, e, n in zip(complexity_ids, complexity_evidence, complexity_notes)
+]
 
 output = {
     "package_manager": package_manager or None,
@@ -257,6 +314,7 @@ output = {
     "install_docs": parse_list(install_docs_enc),
     "git_remote": git_remote or None,
     "default_branch": default_branch or None,
+    "complexity_triggers": complexity_triggers,
 }
 
 json.dump(output, sys.stdout, indent=2, ensure_ascii=False)
