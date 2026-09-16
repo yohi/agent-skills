@@ -154,11 +154,36 @@ verification:
 
 上記の `command` probe は `safety: read_only|mutating|unknown` を必須 field とし、`null` または列挙外の値は schema error とする。`temporary_fixture` は v1 の `command` probe では許可しない。`agent_action.adapter` も `safety: read_only|mutating|unknown` を必須 field とし、`null` または列挙外の値は schema error、`temporary_fixture` は v1 では許可しない。Command と adapter の safety 値は作成者による宣言であり、実行許可そのものではない。
 
-MCP の `initialize` と `tool_discovery` は safety field を持たない固定の read-only protocol operation とする。MCP `representative_tool_call` の `safety` は既存の Contract-defined operation mode であり、`read_only` は `mutation_surface_id` なし、`temporary_fixture` は `external` scope、`snapshot: required`、`cleanup_required: true` の surface と executor が適用できる cleanup procedure を必須とする。executor はこの mode の制約を強制する。
+MCP の `initialize` と `tool_discovery` は safety field を持たない固定の read-only protocol operation とする。MCP `representative_tool_call` の `safety` は既存の Contract-defined operation mode であり、`read_only` は `mutation_surface_id` なし、`temporary_fixture` は `external` scope、`snapshot: required`、`cleanup_required: true` の surface を必須とする。`temporary_fixture` は v1 schema では受理するが、P1 executor の自動実行対象ではない。P1 の MCP representative call は `safety: read_only` に限り実行し、`temporary_fixture` は通常 verification では `not_verified` / `safety_blocked`（定義済み handoff があればそれを出力）、dry-run では `not_executed` とする。
 
 ### Probe safety contract
 
 `probe.safety` と `agent_action.adapter.safety` の実効 safety authority は `run-target-probes.sh` の固定 safety policy とする。Contract は任意の argv を `read_only` と宣言して実行許可に昇格させられない。
+
+#### Probe Safety Policy v1
+
+この policy は `command` probe と `agent_action.adapter` の argv にだけ適用する。MCP の `initialize` / `tool_discovery` は固定 read-only、MCP `representative_tool_call` は Contract の operation mode を使い、argv classifier の対象にしない。分類入力は Contract から得た argv token list と宣言された safety であり、prose、shell command string、通常 verification の `category` は入力にしない。
+
+argv の正規化は次のとおり固定する。argv は空でない string list とし、`argv[0]` は `/` を含まない bare executable name でなければならない。absolute path、relative path、shell（`sh`、`bash`、`zsh`、`dash` など）、environment wrapper（`env`、`sudo`、`command`、`xargs` など）、環境変数展開、quote parsing、shell option は正規化しない。これらは registry に一致しないため `unknown` となる。argv token は変換せず、追加 token は許可しない。
+
+known registry は P1 と既存の regression fixture に必要な最小集合とし、full argv の exact match だけを許可する。prefix match、executable + subcommand match、approved trailing args は v1 では使用しない。
+
+| 実効分類 | canonical argv |
+|---|---|
+| `read_only` | `["node", "--version"]`、`["git", "status", "--porcelain"]` |
+| `mutating` | `["npm", "install"]` |
+
+上記 registry のいずれにも exact match しない argv は `unknown` とする。known-mutating と known-read-only の双方に一致した場合は `mutating` を優先する。宣言された safety と実効分類が一致しない場合は safety mismatch として拒否し、一致していても実効分類が `mutating` または `unknown` なら実行しない。
+
+分類実装と registry の単一 owner は `run-target-probes.sh` とする。通常 verification は executor 内で process start の直前に同じ classifier を実行する。dry-run の admission は、`verify-setup.sh` が次の side-effect-free classification-only interface を呼び出して同じ結果を使う。`verify-setup.sh` は registry や matching 規則を複製しない。
+
+```text
+stdin:  {"argv":["node","--version"],"declared_safety":"read_only"}
+command: bash run-target-probes.sh --classify-only
+stdout: {"effective_safety":"read_only","declaration_matches":true}
+```
+
+`--classify-only` は入力 JSON の検証、分類、結果出力だけを行い、Contract、target repository、外部 resource を読み書きせず、target probe process を開始しない。入力が malformed の場合は exit 2 とし、target operation は開始しない。この classifier process の起動は target operation の process start には数えない。normal verification と dry-run は同一 argv に対して同じ `effective_safety` と `declaration_matches` を得なければならず、異なるのは実行判定だけである。
 
 固定 safety policy は次の順で実効分類する。
 
@@ -173,15 +198,15 @@ known-mutating と known-read-only の双方に一致した場合は `mutating` 
 | 実効 safety | 通常 verification | dry-run |
 |---|---|---|
 | `read_only` | 実行可 | `dry_run.decision: execute` として実行可 |
-| `temporary_fixture` | Contract が定義した MCP representative call に限り条件付き実行可 | `not_executed`。process を開始しない |
+| `temporary_fixture` | P1 では実行不可。`not_verified` / `safety_blocked` | `not_executed`。process を開始しない |
 | `mutating` | 実行不可。`not_verified` / `safety_blocked` | `not_executed`。process を開始しない |
 | `unknown` | 実行不可。`not_verified` / `safety_blocked` | `not_executed`。process を開始しない |
 
 `capability_assessment.status: available` は mechanism が存在し観測可能であることだけを示し、具体的 invocation が safe であることを示さない。`verified` は safety gate 通過後に実行し、期待された evidence を得た結果だけに付与する。したがって `available`、invocation safe、target `verified` は独立した状態であり、available でも safety-blocked になり得るし、safe でも runtime failure により `not_verified` になり得る。
 
-通常 verification の `temporary_fixture` は、`external` scope、`snapshot: required`、`cleanup_required: true` の surface と executor が適用できる cleanup procedure を持つ MCP representative call だけに許可する。executor は operation 前に surface を確認し、operation 後に cleanup と snapshot verification を行う。宣言されていない persistent mutation、target repository、user-local settings、global config の mutation は常に禁止する。通常 verification で safety gate、unsupported mutation surface、temporary fixture の cleanup または snapshot verification が失敗した場合は `status: not_verified` / `error_category: safety_blocked` とする。該当 item に Contract-defined `handoff_id` があれば `status: pending` / `evaluation_result: needs_review` の handoff を出力し、なければ handoff を発明しない。
+P1 の通常 verification は `external` resource を変更する operation を実行しない。`temporary_fixture` が指定された MCP representative call は operation と cleanup のいずれも開始せず、`status: not_verified` / `error_category: safety_blocked` とする。該当 item に Contract-defined `handoff_id` があれば `status: pending` / `evaluation_result: needs_review` の handoff を出力し、なければ handoff を発明しない。宣言されていない persistent mutation、target repository、user-local settings、global config の mutation も常に禁止する。
 
-`cleanup_required` は Contract が cleanup の必要性を宣言する field であり、Contract に任意の cleanup command を記述して実行する仕組みではない。cleanup は probe owner が mutation-surface kind と transport に対応する既定の cleanup path で行う。適用可能な cleanup path がない場合は operation を開始せず、unsupported mutation surface として `safety_blocked` にする。
+`cleanup_required` は Contract が cleanup の必要性を宣言する field であり、Contract に任意の cleanup command を記述して実行する仕組みではない。P1 では temporary fixture の operation も cleanup も自動実行しないため、temporary fixture に対応する transport、snapshot method、cleanup path は定義しない。将来の自動実行をこの文書の未定義部分から推測してはならず、P1 では unsupported probe mode として `safety_blocked` にする。
 
 ### layer vocabulary
 
@@ -361,11 +386,11 @@ Spec 2 が `required_capabilities` の ID を `setup-capability-matrix.md` で�
 
 ### verification execution owner
 
-`verify-setup.sh` は唯一の orchestration owner である。CLI parse、path-selection gate、Contract discovery、enhanced path の PyYAML preflight、audit gate 判定、capability assessment、report assembly、exit status を所有する。target-specific operation は新しい `scripts/run-target-probes.sh` だけが実行する。`verify-setup.sh` は target ごとに依存順で verification item ID を指定して probe を起動し、item から導出した phase と probe output を Verification Report へ写す。probe は宣言されていない persistent mutation を行ってはならず、target repository、user-local settings、global config を更新してはならない。external service の更新は、通常 verification の Contract-defined MCP `temporary_fixture` として許可された surface に対する一時 mutation だけを例外とし、cleanup と snapshot verification を必須とする。dry-run ではこの例外も適用せず `not_executed` とする。
+`verify-setup.sh` は唯一の orchestration owner である。CLI parse、path-selection gate、Contract discovery、enhanced path の PyYAML preflight、audit gate 判定、capability assessment、report assembly、dry-run admission、exit status を所有する。target-specific operation は新しい `scripts/run-target-probes.sh` だけが実行する。`verify-setup.sh` は target ごとに依存順で verification item ID を指定して probe を起動し、item から導出した phase と probe output を Verification Report へ写す。probe は宣言されていない persistent mutation を行ってはならず、target repository、user-local settings、global config、external service を更新してはならない。P1 の `temporary_fixture` は通常 verification でも自動実行せず `not_verified` / `safety_blocked`、dry-run では `not_executed` とする。
 
-`run-target-probes.sh --contract <path> --target <target-id> --item <verification-item-id> --evidence-dir <external-temp-dir>` は JSON object を stdout に1件だけ出力する。`--item` は target 内で一意な verification item ID を指定し、phase はその item から導出する。v1 の executor interface に `--phase` selector は存在しない。shape は `{target_id, item_id, status, reason, evidence, error_category}`、`status` は `verified`, `not_verified`, `not_applicable`、`error_category` は `null`, `capability_unavailable`, `runtime_failure`, `audit_blocked`, `safety_blocked` のいずれかとする。server process の start/stop、timeout、temporary fixture cleanup、process start 直前の safety enforcement は probe owner が担う。通常 verification の safety rejection、unsupported mutation surface、temporary fixture の cleanup または snapshot verification failure は `not_verified` / `safety_blocked` として返す。dry-run で抑止された operation は target probe result を生成せず、orchestrator の `dry_run.decision: not_executed` に記録する。
+`run-target-probes.sh --contract <path> --target <target-id> --item <verification-item-id> --evidence-dir <external-temp-dir>` は JSON object を stdout に1件だけ出力する。`--item` は target 内で一意な verification item ID を指定し、phase はその item から導出する。v1 の executor interface に `--phase` selector は存在しない。分類共有のため、別モードとして `run-target-probes.sh --classify-only` は stdin の classification input を受け、`{effective_safety, declaration_matches}` を stdout に1件だけ出力する。shape は `{target_id, item_id, status, reason, evidence, error_category}`、`status` は `verified`, `not_verified`, `not_applicable`、`error_category` は `null`, `capability_unavailable`, `runtime_failure`, `audit_blocked`, `safety_blocked` のいずれかとする。server process の start/stop、timeout、process start 直前の safety enforcement、P1 unsupported temporary fixture の拒否は probe owner が担う。通常 verification の safety rejection または unsupported probe mode は `not_verified` / `safety_blocked` として返す。dry-run で抑止された operation は target probe result を生成せず、orchestrator の `dry_run.decision: not_executed` に記録する。
 
-P0 は Setup Contract audit、capability assessment、dry-run safety を実装する。P1 は MCP stdio JSON-RPC の `initialize` / `tool_discovery` / safe `representative_tool_call`、実効 safety が `read_only` の adapter による Skill の `agent_action` discovery / activation、CLI と Service の実効 safety が `read_only` の `command` probe を実装する。`mutating` / `unknown` command と安全性を満たさない Skill adapter は自動実行せず、`safety_blocked` とする。Plugin、Hook、`other/custom` は P1 では static phase verification と Contract-defined handoff のみを出力し、executor が未定義の probe を発明しない。
+P0 は Setup Contract audit、capability assessment、dry-run safety を実装する。P1 は MCP stdio JSON-RPC の `initialize` / `tool_discovery` / `safety: read_only` の `representative_tool_call`、実効 safety が `read_only` の adapter による Skill の `agent_action` discovery / activation、CLI と Service の実効 safety が `read_only` の `command` probe を実装する。MCP `temporary_fixture`、`mutating` / `unknown` command、安全性を満たさない Skill adapter は自動実行せず、`safety_blocked`（dry-run では `not_executed`）とする。Plugin、Hook、`other/custom` は P1 では static phase verification と Contract-defined handoff のみを出力し、executor が未定義の probe を発明しない。
 
 ---
 
@@ -454,7 +479,7 @@ evidence は種類・要約・参照先のみ。全文は frontmatter に埋め�
 ### 3層 defense-in-depth
 
 1. **ポリシー**: 本設計と SKILL.md / references で禁止事項を明文化
-2. **classifier**: dry-run 中は実効 safety が `read_only` の known-safe のみ実行
+2. **classifier**: Probe Safety Policy v1 により dry-run 中は実効 safety が `read_only` の known-safe のみ実行
 3. **snapshot**: classifier をすり抜けたローカル mutation を検知
 
 ### classifier 規則（dry-run）
@@ -467,9 +492,9 @@ unknown → not_executed
 ```
 
 - `local-only` / `idempotent` だけを safe にはしない。
-- この classifier は dry-run 専用であり、通常 verification の safety authority にはならない。
+- 分類実装は `run-target-probes.sh` が所有する。通常 verification は process start 直前の内部 gate、dry-run は `--classify-only` interface による admission とし、registry と matching 規則を二重化しない。
 - dry-run は temporary fixture、mutating operation、unknown operation を process start 前に抑止する。Contract に cleanup 要求と mutation surface があっても temporary fixture は実行しない。
-- 通常 verification で `temporary_fixture` を実行する場合だけ、executor が適用できる cleanup procedure と mutation surface を事前に確認し、実行後に cleanup + snapshot verification を必須とする。
+- P1 の通常 verification では `temporary_fixture` を実行しない。対象 item は operation と cleanup を開始せず `not_verified` / `safety_blocked` とし、Contract-defined handoff がある場合だけ handoff を出力する。
 - dry-run の temporary storage cleanup、または read-only probe の snapshot verification に失敗した場合は `dry_run_invariant_violation` として dry-run verification 自体を失敗扱い。
 
 ### scoped snapshot
@@ -507,8 +532,7 @@ runtime_start → initialize → tool_discovery → representative_tool_call
 
 - 特定 tool 名は generic skill に固定しない。
 - Setup Contract の `tool`、`arguments`、`safety`、必要時の `mutation_surface_id` で安全な代表 tool と入力を明示する。executor は tools/list の結果から未指定の tool や入力を発明しない。
-- read/write 双方が本質的なら、通常 verification では `snapshot: required`、`cleanup_required: true` として宣言した external surface の一時データを `temporary_fixture` で検証する。cleanup または snapshot verification に失敗した場合は `safety_blocked` とする。
-- dry-run では `temporary_fixture` の representative tool call を実行せず、`dry_run.decision: not_executed` とする。
+- read/write 双方が本質的、または external resource の操作が必要な場合でも、P1 は `temporary_fixture` の representative tool call を実行しない。対象 item は通常 verification では `not_verified` / `safety_blocked`、dry-run では `dry_run.decision: not_executed` とし、Contract-defined handoff がある場合だけ handoff を出力する。
 
 ### Plugin / Hook / CLI / Service
 
@@ -599,12 +623,12 @@ skill distribution は `skills/agent-driven-setup/requirements.txt` にこの ra
 | Setup Contract schema | YAML frontmatter キー/構造 | verification planner / executor の入力 |
 | verification item ID | stable ID、命名規則推奨 | `blocked_by` 参照 |
 | capability requirement | verification item の `required_capabilities` の ID・list shape・item 内一意性を検証。matrix lookup と availability は所有しない | `setup-capability-matrix.md` で定義を解決し、`available` / `unavailable` / `unknown` を assessment。unknown は item を `not_verified` にする |
-| probe safety | `command.safety` / `agent_action.adapter.safety` の field shape と enum を検証。実効 safety の分類・実行許可は所有しない | `run-target-probes.sh` の固定 policy で実効分類と最終 safety enforcement。通常の拒否は `not_verified` / `safety_blocked`、dry-run の拒否は `not_executed` |
+| probe safety | `command.safety` / `agent_action.adapter.safety` の field shape と enum を検証。実効 safety の分類・実行許可は所有しない | Design の Probe Safety Policy v1 を `run-target-probes.sh` が唯一実装し、通常は最終 gate、dry-run は `--classify-only` で同じ分類を利用する。通常の拒否は `not_verified` / `safety_blocked`、dry-run の拒否は `not_executed` |
 | handoff definition | handoff ID + handoff contract | handoff 選択 / 実行記録 / evidence evaluation |
 | handoff ID | Contract 内で定義 | report 内で参照 |
 | audit report schema | `observed_topology`, `discrepancies`, `finding_state`, `affected_target_ids` | verification 計画の入力 |
 | layer vocabulary | v1 closed enum と locator shape | target-specific phase 設計の入力。列挙外 kind は扱わない |
-| external mutation surfaces | `external_effects.mutation_surfaces` | scoped snapshot の対象 |
+| external mutation surfaces | `external_effects.mutation_surfaces` | Contract-visible scoped snapshot metadata。P1 executor は external resource を操作せず、`temporary_fixture` を自動実行しない |
 
 ---
 

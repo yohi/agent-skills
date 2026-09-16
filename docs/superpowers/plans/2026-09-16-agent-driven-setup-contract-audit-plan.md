@@ -4,7 +4,7 @@
 
 **Goal:** Add the normative Setup Contract v1, deterministic contract discovery, and read-only cross-layer audit required for complex setup verification.
 
-**Architecture:** `setup-contract-schema.md` is the sole schema authority. `audit-contract.sh` parses only that YAML frontmatter, discovers it with the specified protocol, and emits the fixed Audit Report interface. It never writes to the target repository. Spec 1 validates `required_capabilities` as contract-local IDs and list structure only; Spec 2 owns setup-capability definition lookup, availability assessment, and probe safety enforcement. Spec 1 validates the shape and enum of probe safety declarations but never treats a Contract declaration as execution permission. Spec 2 consumes the audit report but does not change audit findings into runtime status.
+**Architecture:** `setup-contract-schema.md` is the sole schema authority. `audit-contract.sh` parses only that YAML frontmatter, discovers it with the specified protocol, and emits the fixed Audit Report interface. It never writes to the target repository. Spec 1 validates `required_capabilities` as contract-local IDs and list structure only; Spec 2 owns setup-capability definition lookup, Probe Safety Policy v1 classification, availability assessment, and probe safety enforcement. Spec 1 validates the shape and enum of probe safety declarations but never treats a Contract declaration as execution permission. Spec 2 consumes the audit report but does not change audit findings into runtime status.
 
 **Tech Stack:** Bash 4+, Python 3, PyYAML `>=6.0,<7`, Markdown, YAML frontmatter.
 
@@ -17,7 +17,7 @@
 - All target paths are repository-relative and may not escape the target root.
 - `configuration_branches[*].layers[*].kind` uses the v1 closed enum; unknown kinds are schema errors.
 - Spec 1 validates `required_capabilities` ID syntax and item-local uniqueness without loading the Spec 2 capability matrix or determining availability.
-- `command.safety` and `agent_action.adapter.safety` use `read_only|mutating|unknown`; `null` and out-of-enum values are schema errors. Spec 1 validates only their Contract shape and enum, while `run-target-probes.sh` owns effective classification and final enforcement.
+- `command.safety` and `agent_action.adapter.safety` use `read_only|mutating|unknown`; `null` and out-of-enum values are schema errors. Spec 1 validates only their Contract shape and enum, while the Design-defined Probe Safety Policy v1 is classified and finally enforced by `run-target-probes.sh`. Its `--classify-only` interface is the only dry-run reuse mechanism; Spec 1 does not duplicate the classifier.
 - The existing simple-repository path remains unchanged.
 - Do not create AI agent configuration files.
 
@@ -54,7 +54,7 @@
 
 **Interfaces:** `setup_contract_schema_version` is integer `1`; target IDs and verification target keys match; layer and mutation-surface discriminators use the exact v1 closed vocabulary; `required_capabilities` contains only unique item-local IDs matching `[a-z][a-z0-9_-]*`; Spec 1 does not perform capability-matrix lookup; PyYAML missing is `dependency_unavailable` / exit 3.
 
-**Safety boundary:** `command.safety` and `agent_action.adapter.safety` are required declarations with the enum `read_only|mutating|unknown`; `null` and out-of-enum values are schema errors. `temporary_fixture` remains limited to MCP `representative_tool_call` and requires an `external` / `snapshot: required` / `cleanup_required: true` mutation surface. Spec 1 rejects malformed safety fields but does not classify argv or authorize execution. The effective safety policy and process-start enforcement are Spec 2 responsibilities.
+**Safety boundary:** `command.safety` and `agent_action.adapter.safety` are required declarations with the enum `read_only|mutating|unknown`; `null` and out-of-enum values are schema errors. `temporary_fixture` remains limited to MCP `representative_tool_call` and requires an `external` / `snapshot: required` / `cleanup_required: true` mutation surface for Contract validity, but P1 does not automatically execute that mode. Spec 1 rejects malformed safety fields but does not classify argv or authorize execution. The Design-defined effective safety policy, `--classify-only` reuse, and process-start enforcement are Spec 2 responsibilities.
 
 **RED:**
 - [ ] Make the RED setup self-contained: generate a minimal valid Contract mapping in a temporary fixture inside the test, copy it, and remove `setup_target.mcp_main.runtime` from the copy. Do not depend on the fixture or schema files created in GREEN.
@@ -181,18 +181,18 @@
 
 **Depends on:** Tasks 1 through 4.
 
-**Consumes:** Contract v1, audit grammar, discovery protocol, and trigger output.
+**Consumes:** Contract v1, audit grammar, discovery protocol, trigger output, and the Design-defined Probe Safety Policy v1 support boundary.
 
 **Produces:** documentation-only enhanced workflow that preserves the simple-repository path.
 
-**Interfaces:** no runtime interface changes; complex repositories use Contract extraction then audit; `not_found` returns to extraction and `ambiguous` requires semantic review.
+**Interfaces:** no runtime interface changes; complex repositories use Contract extraction then audit; `not_found` returns to extraction and `ambiguous` requires semantic review. This plan documents the safety boundary but does not implement or duplicate the Spec 2 classifier; P1 automatic verification is limited to supported read-only probes, while Contract-defined MCP `temporary_fixture` is handed off or reported `safety_blocked`.
 
 **RED:**
-- [ ] Add documentation assertions for the exact Contract marker syntax, `audit-contract.sh` grammar, mutation-surface investigation, probe safety declaration versus execution authority, and simple-path preservation.
+- [ ] Add documentation assertions for the exact Contract marker syntax, `audit-contract.sh` grammar, mutation-surface investigation, Probe Safety Policy v1 as the Spec 2 authority, `run-target-probes.sh --classify-only` reuse, P1 `temporary_fixture` unsupported behavior, probe safety declaration versus execution authority, and simple-path preservation.
 - [ ] Run the suite and confirm the header/content assertions fail before documentation is updated.
 
 **GREEN:**
-- [ ] Document trigger evidence, Contract placement, discovery marker, target type, configuration branches, mutation surfaces, and the rule that safety declarations do not authorize probe execution.
+- [ ] Document trigger evidence, Contract placement, discovery marker, target type, configuration branches, mutation surfaces, the Probe Safety Policy v1 cross-reference, the `--classify-only` reuse boundary, P1 `temporary_fixture` handoff/`safety_blocked` behavior, and the rule that safety declarations do not authorize probe execution.
 - [ ] Document the enhanced flow without changing the existing standard flow.
 - [ ] Run the suite and confirm all documentation assertions pass.
 
