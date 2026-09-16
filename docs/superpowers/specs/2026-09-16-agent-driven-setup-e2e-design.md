@@ -95,7 +95,7 @@ YAML frontmatter は唯一の機械可読 contract である。本文は説明�
 |---|---|---|---|
 | `target_type` | はい | `skill`, `mcp`, `plugin`, `hook`, `cli`, `service`, `other/custom` | target-specific probe profile を選ぶ discriminator。 |
 | `canonical_source` | はい | `{kind, value, ref_mode, ref}` | `kind` は `repository_path`, `url`, `registry`, `external_resource`。`value` は kind に対応する canonical identifier。`ref_mode` は `immutable`, `mutable`, `not_applicable`。`ref` は `ref_mode` が `not_applicable` 以外なら必須、そうでなければ禁止。 |
-| `runtime` | はい | `{mode, command, safety}` | `mode` は `process`, `in_process`, `agent_discovery`, `external_service`, `not_applicable`。`command` と `safety` は `process` のときだけ必須で、`command` は non-empty argv list、`safety` は `read_only|mutating|unknown`（`null` と列挙外は schema error）。`process` 以外では両方を禁止する。`safety` は作成者の宣言であり、実行許可ではない。 |
+| `runtime` | はい | `{mode, command, safety}` | `mode` は `process`, `in_process`, `agent_discovery`, `external_service`, `not_applicable`。`command` と `safety` は `process` のときだけ必須で、`command` は non-empty argv list、`safety` は `read_only, mutating, unknown`（`null` と列挙外は schema error）。`process` 以外では両方を禁止する。`safety` は作成者の宣言であり、実行許可ではない。 |
 
 `configuration_branches[*]` は `{id, layers}` である。`layers` は non-empty list であり、各 layer は stable かつ branch 内で一意な `id` と `kind` を持つ。v1 の `kind` は closed enum であり、`choice`, `installer`, `cli`, `env`, `settings`, `generated_config`, `registration`, `discovery`, `runtime_consumer`, `activation`, `representative_operation`, `verification` のいずれかである。列挙されていない `kind` は schema error とし、v1 の実装は未知の locator shape や audit 規則を発明しない。機械的な locator は `kind` ごとに次の shape を使う。
 
