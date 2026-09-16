@@ -164,7 +164,7 @@ MCP の `initialize` と `tool_discovery` は safety field を持たない固定
 
 #### Probe Safety Policy v1
 
-この policy は `command` probe、`agent_action.adapter`、および process mode の `setup_target.<target_id>.runtime.command` の argv に適用する。MCP の `initialize` / `tool_discovery` は固定 read-only、MCP `representative_tool_call` は Contract の operation mode を使い、protocol request 自体は argv classifier の対象にしない。MCP server process の start admission は `runtime.command` と `runtime.safety` に対して同じ classifier を使う。分類入力は Contract から得た argv token list と宣言された safety であり、prose、shell command string、通常 verification の `category` は入力にしない。
+この policy は `command` probe、`agent_action.adapter`、および process mode の `setup_target.<target_id>.runtime.command` の argv に適用する。`agent_action.adapter` は分類対象であるが、P1 Skill の support boundary はこの分類結果による execution admission より先に適用し、分類が `read_only` でも adapter process の起動を許可しない。MCP の `initialize` / `tool_discovery` は固定 read-only、MCP `representative_tool_call` は Contract の operation mode を使い、protocol request 自体は argv classifier の対象にしない。MCP server process の start admission は `runtime.command` と `runtime.safety` に対して同じ classifier を使う。分類入力は Contract から得た argv token list と宣言された safety であり、prose、shell command string、通常 verification の `category` は入力にしない。
 
 argv の正規化は次のとおり固定する。argv は空でない string list とし、`argv[0]` は `/` を含まない bare executable name でなければならない。absolute path、relative path、shell（`sh`、`bash`、`zsh`、`dash` など）、environment wrapper（`env`、`sudo`、`command`、`xargs` など）、環境変数展開、quote parsing、shell option は正規化しない。これらは registry に一致しないため `unknown` となる。argv token は変換せず、追加 token は許可しない。
 
@@ -177,9 +177,11 @@ known registry は P1 と既存の regression fixture に必要な最小集合�
 
 上記 registry のいずれにも exact match しない argv は `unknown` とする。known-mutating と known-read-only の双方に一致した場合は `mutating` を優先する。宣言された safety と実効分類が一致しない場合は safety mismatch として拒否し、一致していても実効分類が `mutating` または `unknown` なら実行しない。
 
+この実行判定に先立ち、P1 Skill `agent_action` adapter には support boundary を適用する。そのため safety 宣言と実効分類が一致し、実効分類が `read_only` であっても、P1 では adapter process の execution admission に進めない。
+
 P1 MCP stdio の safe runtime fixture は caller が target repository 外の `PATH` に用意する `agent-setup-mcp-stdio-readonly` executable とし、`runtime.command: ["agent-setup-mcp-stdio-readonly"]`、`runtime.safety: read_only` とする。stdin は newline-delimited JSON-RPC の `initialize`、`tools/list`、Contract 選択済み read-only tool call を順に受け、stdout は各 request に対応する observable response を返す。fixture は target repository、user-local settings、global config、external resource を変更しない。この exact argv は P1 の runtime-start fixture として registry に登録し、別の executable、wrapper、trailing args は同じ fixture を指していても `unknown` とする。
 
-分類実装と registry の単一 owner は `run-target-probes.sh` とする。通常 verification は executor 内で command probe、supported runtime process、または adapter の process start 直前に同じ classifier を実行する。dry-run の admission は、`verify-setup.sh` が次の side-effect-free classification-only interface を呼び出して同じ結果を使う。`verify-setup.sh` は registry や matching 規則を複製しない。
+分類実装と registry の単一 owner は `run-target-probes.sh` とする。通常 verification は executor 内で command probe、supported runtime process、または将来明示的に supported となる adapter の process start 直前に同じ classifier を実行する。P1 Skill `agent_action` adapter には support boundary を先に適用するため、この classifier 結果は process start の許可にならない。dry-run の admission は、`verify-setup.sh` が次の side-effect-free classification-only interface を呼び出して同じ結果を使う。`verify-setup.sh` は registry や matching 規則を複製しない。
 
 ```text
 stdin:  {"argv":["node","--version"],"declared_safety":"read_only"}
@@ -201,11 +203,12 @@ known-mutating と known-read-only の双方に一致した場合は `mutating` 
 
 | 対象 / 実効 safety | 通常 verification | dry-run |
 |---|---|---|
-| command probe / adapter: `read_only` | 実行可 | `dry_run.decision: execute` として実行可 |
+| command probe: `read_only` | 実行可 | `dry_run.decision: execute` として実行可 |
+| Skill `agent_action` adapter (P1): any effective safety | adapter process を開始しない。`not_verified` / `safety_blocked`。Contract-defined handoff のみ | adapter process を開始しない。`dry_run.decision: not_executed`。handoff definition は reference-only とし、handoff execution record は生成しない |
 | MCP `runtime.command`: `read_only` | runtime process を起動して protocol operation を実行可 | classifier のみ実行し、`dry_run.decision: not_executed`。runtime process を開始しない |
 | MCP `temporary_fixture` | runtime process、operation、cleanup のいずれも P1 では開始しない。`not_verified` / `safety_blocked` | `not_executed`。process を開始しない |
-| command probe / adapter / MCP runtime: `mutating` | 実行不可。`not_verified` / `safety_blocked` | `not_executed`。process を開始しない |
-| command probe / adapter / MCP runtime: `unknown` または safety mismatch | 実行不可。`not_verified` / `safety_blocked` | `not_executed`。process を開始しない |
+| command probe / MCP runtime: `mutating` | 実行不可。`not_verified` / `safety_blocked` | `not_executed`。process を開始しない |
+| command probe / MCP runtime: `unknown` または safety mismatch | 実行不可。`not_verified` / `safety_blocked` | `not_executed`。process を開始しない |
 
 MCP runtime の dry-run は、`runtime.command` の classification-only admission までに限定する。`runtime.safety: read_only` であっても server process、`initialize`、`tool_discovery`、representative call は開始せず、chain 全体を `dry_run.decision: not_executed` とする。normal verification の MCP runtime start は、`runtime.safety` と実効分類がともに `read_only` の場合だけ許可する。
 
@@ -397,7 +400,7 @@ Spec 2 が `required_capabilities` の ID を `setup-capability-matrix.md` で�
 
 `verify-setup.sh` は唯一の orchestration owner である。CLI parse、path-selection gate、Contract discovery、enhanced path の PyYAML preflight、audit gate 判定、capability assessment、report assembly、dry-run admission、exit status を所有する。target-specific operation は新しい `scripts/run-target-probes.sh` だけが実行する。`verify-setup.sh` は target ごとに依存順で verification item ID を指定して probe を起動し、item から導出した phase と probe output を Verification Report へ写す。probe は宣言されていない persistent mutation を行ってはならず、target repository、user-local settings、global config、external service を更新してはならない。P1 の Skill `agent_action` discovery / activation は自動実行せず、Contract-defined handoff 境界とする。P1 の MCP `temporary_fixture` は runtime process、operation、cleanup のいずれも自動実行せず `not_verified` / `safety_blocked`、dry-run では `not_executed` とする。
 
-`run-target-probes.sh --contract <path> --target <target-id> --item <verification-item-id> --evidence-dir <external-temp-dir>` は JSON object を stdout に1件だけ出力する。`--item` は target 内で一意な verification item ID を指定し、phase はその item から導出する。v1 の executor interface に `--phase` selector は存在しない。分類共有のため、別モードとして `run-target-probes.sh --classify-only` は stdin の classification input を受け、`{effective_safety, declaration_matches}` を stdout に1件だけ出力する。shape は `{target_id, item_id, status, reason, evidence, error_category}`、`status` は `verified`, `not_verified`, `not_applicable`、`error_category` は `null`, `capability_unavailable`, `runtime_failure`, `audit_blocked`, `safety_blocked` のいずれかとする。server process の start/stop、timeout、runtime command / command probe / adapter の process start 直前の safety enforcement、P1 unsupported probe の拒否は probe owner が担う。MCP runtime command は `runtime.safety` を宣言として同じ classifier に渡し、effective safety が `read_only` で declaration が一致した場合だけ normal verification で start する。通常 verification の safety rejection または unsupported probe mode は `not_verified` / `safety_blocked` として返す。dry-run で抑止された operation または MCP runtime は target probe result を生成せず、orchestrator の `dry_run.decision: not_executed` に記録する。
+`run-target-probes.sh --contract <path> --target <target-id> --item <verification-item-id> --evidence-dir <external-temp-dir>` は JSON object を stdout に1件だけ出力する。`--item` は target 内で一意な verification item ID を指定し、phase はその item から導出する。v1 の executor interface に `--phase` selector は存在しない。分類共有のため、別モードとして `run-target-probes.sh --classify-only` は stdin の classification input を受け、`{effective_safety, declaration_matches}` を stdout に1件だけ出力する。shape は `{target_id, item_id, status, reason, evidence, error_category}`、`status` は `verified`, `not_verified`, `not_applicable`、`error_category` は `null`, `capability_unavailable`, `runtime_failure`, `audit_blocked`, `safety_blocked` のいずれかとする。server process の start/stop、timeout、runtime command / command probe / 将来明示的に supported となる adapter の process start 直前の safety enforcement、P1 unsupported probe の拒否は probe owner が担う。P1 Skill `agent_action` adapter は support boundary により process start へ進めない。MCP runtime command は `runtime.safety` を宣言として同じ classifier に渡し、effective safety が `read_only` で declaration が一致した場合だけ normal verification で start する。通常 verification の safety rejection または unsupported probe mode は `not_verified` / `safety_blocked` として返す。dry-run で抑止された operation、P1 Skill adapter、または MCP runtime は target probe result を生成せず、orchestrator の `dry_run.decision: not_executed` に記録する。
 
 P0 は Setup Contract audit、capability assessment、dry-run safety を実装する。P1 は `runtime.command` が Policy v1 の known `read_only` と一致する MCP stdio JSON-RPC の `initialize` / `tool_discovery` / `safety: read_only` の `representative_tool_call`、および CLI と Service の実効 safety が `read_only` の `command` probe を実装する。Skill の `agent_action` discovery / activation は P1 では自動実行せず、各 item の Contract-defined handoff 境界を出力する。MCP `temporary_fixture`、`mutating` / `unknown` command、safety を満たさない runtime command は自動実行せず、`safety_blocked`（dry-run では `not_executed`）とする。Plugin、Hook、`other/custom` は P1 では static phase verification と Contract-defined handoff のみを出力し、executor が未定義の probe を発明しない。
 
@@ -488,13 +491,14 @@ evidence は種類・要約・参照先のみ。全文は frontmatter に埋め�
 ### 3層 defense-in-depth
 
 1. **ポリシー**: 本設計と SKILL.md / references で禁止事項を明文化
-2. **classifier**: Probe Safety Policy v1 により dry-run 中は command probe / adapter の実効 safety が `read_only` の known-safe のみ実行し、MCP runtime は classification-only に限定
+2. **classifier**: Probe Safety Policy v1 により dry-run 中は command probe の実効 safety が `read_only` の known-safe のみ実行する。`agent_action.adapter` は同じ classifier で分類するが、P1 Skill support boundary により `read_only` でも `not_executed` とし、MCP runtime は classification-only に限定
 3. **snapshot**: classifier をすり抜けたローカル mutation を検知
 
 ### classifier 規則（dry-run）
 
 ```text
-known-safe command / adapter (read-only) → execute
+known-safe command probe (read-only) → execute
+P1 Skill `agent_action` adapter (any effective safety) → `not_executed`; process を開始しない
 MCP runtime command (read-only) → not_executed; process を開始しない
 temporary_fixture → not_executed
 known-mutating → not_executed
@@ -502,7 +506,7 @@ unknown → not_executed
 ```
 
 - `local-only` / `idempotent` だけを safe にはしない。
-- 分類実装は `run-target-probes.sh` が所有する。通常 verification は process start 直前の内部 gate、dry-run は `--classify-only` interface による admission とし、registry と matching 規則を二重化しない。
+- 分類実装は `run-target-probes.sh` が所有する。通常 verification は process start 直前の内部 gate、dry-run は `--classify-only` interface による admission とし、registry と matching 規則を二重化しない。P1 Skill `agent_action` adapter は分類結果にかかわらず support boundary で process start を抑止する。
 - dry-run は temporary fixture、MCP runtime process、mutating operation、unknown operation を process start 前に抑止する。Contract に cleanup 要求と mutation surface があっても temporary fixture は実行しない。
 - P1 の通常 verification では `temporary_fixture` を実行しない。対象 item は runtime process、operation、cleanup を開始せず `not_verified` / `safety_blocked` とし、Contract-defined handoff がある場合だけ handoff を出力する。
 - dry-run の temporary storage cleanup、または read-only probe の snapshot verification に失敗した場合は `dry_run_invariant_violation` として dry-run verification 自体を失敗扱い。
@@ -531,6 +535,7 @@ install / register → agent_discovery → representative_activation
 ```
 
 - P1 では `agent_discovery_probe` と `representative_activation_probe` が available でも、具体的な public Agent seam が Policy v1 に選定されていないため adapter を自動実行しない。discovery / activation item は `status: not_verified` / `error_category: safety_blocked` とし、Contract-defined `handoff_id` がある場合だけ `status: pending` / `evaluation_result: needs_review` の handoff を出力する。handoff がない場合は発明しない。
+- dry-run では adapter の argv を classifier で評価しても、P1 Skill support boundary により adapter process を開始せず、`dry_run.decision: not_executed` とする。`handoff_id` がある場合は Contract-defined handoff definition を reference-only で report に含めるが、handoff execution record は生成しない。
 - `agent_action` の schema は Contract の `adapter.argv`、`prompt`、stdin mode を保持するが、P1 executor は Agent CLI、argv、prompt を発明せず、adapter process を開始しない。将来 concrete seam を導入する場合も、既存の public Agent mechanism、exact argv、stdin contract、observable success condition、Policy v1 の safety authority を同時に設計更新する。
 
 ### MCP
@@ -634,7 +639,7 @@ skill distribution は `skills/agent-driven-setup/requirements.txt` にこの ra
 | Setup Contract schema | YAML frontmatter キー/構造 | verification planner / executor の入力 |
 | verification item ID | stable ID、命名規則推奨 | `blocked_by` 参照 |
 | capability requirement | verification item の `required_capabilities` の ID・list shape・item 内一意性を検証。matrix lookup と availability は所有しない | `setup-capability-matrix.md` で定義を解決し、`available` / `unavailable` / `unknown` を assessment。unknown は item を `not_verified` にする |
-| probe safety | `command.safety` / `agent_action.adapter.safety` / process runtime の `runtime.safety` の field shape と enum を検証。実効 safety の分類・実行許可は所有しない | Design の Probe Safety Policy v1 を `run-target-probes.sh` が唯一実装し、command / supported runtime / adapter の通常 start 前に最終 gate、dry-run は `--classify-only` で同じ分類を利用する。Skill `agent_action` は P1 では自動実行せず handoff 境界とする。通常の拒否は `not_verified` / `safety_blocked`、dry-run の拒否は `not_executed` |
+| probe safety | `command.safety` / `agent_action.adapter.safety` / process runtime の `runtime.safety` の field shape と enum を検証。実効 safety の分類・実行許可は所有しない | Design の Probe Safety Policy v1 を `run-target-probes.sh` が唯一実装し、command / supported runtime / 将来明示的に supported となる adapter の通常 start 前に最終 gate、dry-run は `--classify-only` で同じ分類を利用する。Skill `agent_action` は P1 support boundary を safety admission より先に適用し、自動実行せず handoff 境界とする。通常の拒否は `not_verified` / `safety_blocked`、dry-run の拒否は `not_executed` |
 | handoff definition | handoff ID + handoff contract | handoff 選択 / 実行記録 / evidence evaluation |
 | handoff ID | Contract 内で定義 | report 内で参照 |
 | audit report schema | `observed_topology`, `discrepancies`, `finding_state`, `affected_target_ids` | verification 計画の入力 |
