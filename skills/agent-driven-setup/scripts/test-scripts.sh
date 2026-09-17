@@ -97,6 +97,59 @@ assert data["build_command"] == "node build.js"
 assert data["lint_command"] == "node lint.js"
 assert data["lockfiles"] == ["package-lock.json", "yarn.lock"]
 assert data["install_docs"] == ["docs/install.md", "INSTALL.md"]
+assert data["complexity_triggers"] == []
+'
+}
+
+check_analysis_emits_complexity_triggers() {
+  local repo="$TEMP_DIR/complex-trigger-repo"
+  mkdir -p "$repo"
+
+  # MCP runtime config (mcp.json)
+  cat > "$repo/mcp.json" <<'JSON'
+{
+  "mcpServers": {
+    "local": {
+      "command": "agent-setup-mcp-stdio-readonly"
+    }
+  }
+}
+JSON
+
+  # Multiple config writers: .env.example, config/settings.yaml, and a setup script
+  mkdir -p "$repo/config"
+  touch "$repo/.env.example"
+  cat > "$repo/config/settings.yaml" <<'YAML'
+server:
+  port: 3000
+YAML
+  cat > "$repo/config/setup.sh" <<'SH'
+#!/bin/bash
+set -euo pipefail
+# writes both .env.example and config/settings.yaml
+SH
+
+  # Webhook URL referenced in docs
+  mkdir -p "$repo/docs"
+  cat > "$repo/docs/web|hooks.md" <<'MD'
+Notifications are delivered to https://hooks.example.invalid/abc123 and
+also POSTed to https://webhooks.example.invalid/notify.
+MD
+
+  bash "$SCRIPT_DIR/analyze-repo.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+ids = [t["id"] for t in data["complexity_triggers"]]
+assert sorted(ids) == sorted(["mcp-runtime", "multiple-config-writers", "webhook-url"]), ids
+for t in data["complexity_triggers"]:
+    assert set(t) == {"id", "evidence", "note"}, t
+    assert all(isinstance(v, str) and v for v in t.values())
+    assert "install_docs" in data
+    if t["id"] == "webhook-url":
+        assert t["evidence"] == "docs/web|hooks.md", t
 '
 }
 
@@ -1830,6 +1883,7 @@ run_test "audit writes both formats outside target" check_audit_writes_both_form
 run_test "audit rejects target-internal output directories" check_audit_rejects_target_internal_output_dir
 run_test "audit reports missing PyYAML without installing" check_audit_reports_dependency_unavailable_without_installing
 run_test "audit reports static topology discrepancies" check_audit_reports_static_topology
+run_test "analysis emits evidence-only complexity triggers" check_analysis_emits_complexity_triggers
 run_test "audit assigns unmatched layer paths to unassigned" check_audit_unmatched_layer_path_is_unassigned
 
 if (( failures > 0 )); then
