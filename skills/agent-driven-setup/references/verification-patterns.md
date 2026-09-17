@@ -4,6 +4,33 @@ The skill must verify the actual setup path, not just edit documentation. Use
 the repository's own commands whenever possible, and add minimal smoke tests
 only when existing verification does not cover setup.
 
+## Setup Contract v1 capability verification
+
+Resolve each `required_capabilities` entry against
+[`setup-capability-matrix.md`](setup-capability-matrix.md). The only capability
+statuses are `available`, `unavailable`, and `unknown`; a missing matrix
+definition is `unknown`, and its dependent item is `not_verified`.
+
+Keep capability availability separate from the target-operation result. A
+declared safety value is metadata, not execution authority: apply the shared
+Policy v1 classifier and use effective safety. Only `read_only` command probes,
+supported MCP stdio runtimes, fixed read-only MCP protocol operations, and a
+representative MCP tool call whose Contract declares `safety: read_only` may
+execute in P1. Mutating or unknown representative calls are `not_verified`
+with `error_category: safety_blocked`. Safety-blocked items are `not_verified`
+with `error_category: safety_blocked`.
+
+P1 uses these probe boundaries: `mcp_runtime_probe` for MCP process startup and
+fixed protocol discovery, `agent_discovery_probe` for Contract-defined
+discovery, and `representative_activation_probe` for a Contract-defined
+representative read-only operation. Skill `agent_action` discovery/activation,
+MCP `temporary_fixture`, Plugin, Hook, and `other/custom` remain handoffs; no
+invented probe is permitted. The Skill classifier can return `read_only`, but
+normal verification still returns `not_verified` / `safety_blocked`, while
+dry-run returns `not_executed`; no Skill `agent_action` is automatically
+executed in P1. target-operation separation is required: target operation and capability assessment are
+separate, and dry-run/classification must not execute or write to the target.
+
 ## Preferred verification order
 
 1. **Repository-defined test / build / lint commands**

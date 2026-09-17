@@ -2194,6 +2194,33 @@ check_documentation_enhanced_probe_boundary() {
   grep -qF -- 'safety_blocked' "$SKILL_DIR/SKILL.md" || return 1
 }
 
+check_documentation_capability_references() {
+  python3 - "$SKILL_DIR/references/setup-capability-matrix.md" \
+    "$SKILL_DIR/references/agent-capability-matrix.md" \
+    "$SKILL_DIR/references/verification-patterns.md" <<'PY'
+from pathlib import Path
+import sys
+
+setup, generic, verification = [Path(path).read_text(encoding="utf-8") for path in sys.argv[1:]]
+for phrase in (
+    "mcp_runtime_probe", "agent_discovery_probe", "representative_activation_probe",
+    "available", "unavailable", "unknown", "generic_prerequisites.candidates",
+    "prerequisites do not derive availability", "target-operation separation",
+    "declared safety", "effective safety", "unknown -> not_verified", "safety_blocked",
+    "dry-run", "report", "handoff", "P1", "Target default profiles",
+    "safety: read_only", "Mutating or unknown representative calls",
+    "Skill classifier can return", "not_executed",
+):
+    assert phrase in setup or phrase in verification, phrase
+for capability in (
+    "repository_inspection", "file_operations", "command_execution",
+    "structured_ask", "secret_input", "web_fetch",
+):
+    assert capability in generic, capability
+assert "setup-specific" not in generic.lower()
+PY
+}
+
 check_documentation_probe_safety_policy_v1_authority() {
   grep -q 'Probe Safety Policy v1' "$SKILL_DIR/SKILL.md" || return 1
   grep -q 'run-target-probes.sh' "$SKILL_DIR/SKILL.md" || return 1
@@ -2292,6 +2319,7 @@ run_test "target probe blocks temporary fixtures before process start" check_tar
 run_test "target probe rejects internal evidence dirs without mutation" check_target_probe_rejects_internal_evidence_dir_without_mutation
 run_test "verification exposes the enhanced probe workflow" check_verification_exposes_enhanced_workflow
 run_test "documentation defines the enhanced probe boundary" check_documentation_enhanced_probe_boundary
+run_test "documentation publishes capability and verification references" check_documentation_capability_references
 
 if (( failures > 0 )); then
   exit 1
