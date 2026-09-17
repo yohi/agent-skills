@@ -107,8 +107,6 @@ if (
     or not all(isinstance(token, str) and token for token in argv)
 ):
     fail("argv must be a non-empty string list")
-if any("/" in token for token in argv):
-    fail("argv tokens must not contain path separators")
 if declared_safety not in SAFETY_VALUES:
     fail("declared_safety must be read_only, mutating, or unknown")
 
@@ -177,8 +175,10 @@ import hashlib
 import json
 import os
 import re
+import select
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -268,12 +268,35 @@ if not isinstance(item, dict):
     emit("not_verified", "verification item was not found", "audit_blocked")
 
 probe = item.get("probe")
+if probe is None:
+    emit(
+        "not_verified",
+        "verification item has no automatic P1 probe; use the Contract-defined handoff",
+        None,
+    )
 if not isinstance(probe, dict):
     emit("not_verified", "verification item has no probe", "audit_blocked")
 
 kind = probe.get("kind")
+target_type = target.get("target_type")
+if kind == "command" and target_type not in {"cli", "service"}:
+    emit(
+        "not_verified",
+        "command probes are only authorized for cli and service targets",
+        "safety_blocked",
+    )
 if kind == "agent_action":
-    emit("not_verified", "P1 does not start agent_action adapters; use the Contract-defined handoff", "safety_blocked")
+    if target_type != "skill":
+        emit(
+            "not_verified",
+            "agent_action probes are only authorized for skill targets",
+            "safety_blocked",
+        )
+    emit(
+        "not_verified",
+        "P1 does not start agent_action adapters; use the Contract-defined handoff",
+        "safety_blocked",
+    )
 
 if kind == "command":
     argv = probe.get("argv")
@@ -306,6 +329,12 @@ if kind == "command":
     emit("verified", "supported read-only command completed", None, evidence)
 
 if kind == "mcp_request":
+    if target_type != "mcp":
+        emit(
+            "not_verified",
+            "mcp_request probes are only authorized for mcp targets",
+            "safety_blocked",
+        )
     request = probe.get("request")
     if request == "representative_tool_call" and probe.get("mutation_surface_id"):
         emit("not_verified", "Contract-defined temporary_fixture is not automatically executed in P1", "safety_blocked")
@@ -313,6 +342,12 @@ if kind == "mcp_request":
         emit("not_verified", "mutating or unknown MCP representative calls are not automatically executed in P1", "safety_blocked")
 
     runtime = target.get("runtime", {})
+    if not isinstance(runtime, dict) or runtime.get("mode") != "process":
+        emit(
+            "not_verified",
+            "MCP runtime mode is unsupported for automatic P1 execution",
+            "safety_blocked",
+        )
     argv = runtime.get("command") if isinstance(runtime, dict) else None
     declared_safety = runtime.get("safety") if isinstance(runtime, dict) else None
     if not isinstance(argv, list) or not argv or not all(isinstance(token, str) and token for token in argv):
@@ -327,6 +362,9 @@ if kind == "mcp_request":
     fixture = os.environ.get("AGENT_SETUP_MCP_FIXTURE")
     if not fixture or not Path(fixture).is_absolute():
         emit("not_verified", "AGENT_SETUP_MCP_FIXTURE must name the caller-provided absolute fixture path", "capability_unavailable")
+    fixture_argument = Path(os.path.abspath(fixture))
+    if REPO_ROOT == fixture_argument or REPO_ROOT in fixture_argument.parents:
+        emit("not_verified", "MCP fixture must be outside the target repository", "safety_blocked")
     try:
         fixture_path = Path(fixture).resolve(strict=True)
     except OSError:
@@ -342,16 +380,56 @@ if kind == "mcp_request":
     elif request == "tool_discovery":
         messages = [{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}]
     elif request == "representative_tool_call":
-        messages = [{
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": probe.get("tool"), "arguments": probe.get("arguments", {})},
-        }]
+        messages = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": probe.get("tool"),
+                    "arguments": probe.get("arguments", {}),
+                },
+            },
+        ]
     else:
         emit("not_verified", "MCP request is unsupported", "audit_blocked")
 
-    payload = "".join(json.dumps(message, separators=(",", ":")) + "\n" for message in messages)
+    def read_response(process, deadline):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        ready, _, _ = select.select([process.stdout], [], [], remaining)
+        if not ready:
+            raise TimeoutError
+        line = process.stdout.readline()
+        if not line:
+            raise RuntimeError("MCP runtime closed stdout before responding")
+        return line
+
+    def finalize_process(process):
+        if process is None:
+            return "", "", -1
+        if process.stdin is not None and not process.stdin.closed:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+        if process.poll() is None:
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        stdout_tail = process.stdout.read() if process.stdout is not None else ""
+        stderr = process.stderr.read() if process.stderr is not None else ""
+        return stdout_tail, stderr, process.returncode
+
+    process = None
+    response_lines = []
+    valid_responses = True
+    failure_reason = None
     try:
         process = subprocess.Popen(
             launch_argv,
@@ -360,40 +438,61 @@ if kind == "mcp_request":
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            bufsize=1,
         )
-        stdout, stderr = process.communicate(payload, timeout=30)
+        deadline = time.monotonic() + 30
+        for message in messages:
+            process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
+            process.stdin.flush()
+            line = read_response(process, deadline)
+            response_lines.append(line)
+            try:
+                response = json.loads(line)
+            except json.JSONDecodeError:
+                valid_responses = False
+                failure_reason = "supported MCP runtime returned malformed JSON"
+                break
+            has_result = "result" in response if isinstance(response, dict) else False
+            has_error = "error" in response if isinstance(response, dict) else False
+            if (
+                not isinstance(response, dict)
+                or response.get("jsonrpc") != "2.0"
+                or response.get("id") != message["id"]
+                or has_result == has_error
+                or has_error
+            ):
+                valid_responses = False
+                failure_reason = "supported MCP runtime returned an invalid response"
+                break
     except FileNotFoundError:
-        emit("not_verified", "supported MCP runtime executable is unavailable", "capability_unavailable")
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.communicate()
-        emit("not_verified", "supported MCP runtime timed out", "runtime_failure")
-    record = summarize_output(stdout.encode(), stderr.encode(), process.returncode)
-    response_lines = [line for line in stdout.splitlines() if line.strip()]
-    expected_ids = [message["id"] for message in messages]
-    valid_responses = len(response_lines) == len(expected_ids)
-    for line, expected_id in zip(response_lines, expected_ids):
-        try:
-            response = json.loads(line)
-        except json.JSONDecodeError:
-            valid_responses = False
-            break
-        has_result = "result" in response if isinstance(response, dict) else False
-        has_error = "error" in response if isinstance(response, dict) else False
-        if (
-            not isinstance(response, dict)
-            or response.get("jsonrpc") != "2.0"
-            or response.get("id") != expected_id
-            or has_result == has_error
-            or has_error
-        ):
-            valid_responses = False
-            break
-    record["responses_observed"] = len(response_lines)
+        emit(
+            "not_verified",
+            "supported MCP runtime executable is unavailable",
+            "capability_unavailable",
+        )
+    except TimeoutError:
+        valid_responses = False
+        failure_reason = "supported MCP runtime timed out"
+    except (BrokenPipeError, OSError, RuntimeError) as exc:
+        valid_responses = False
+        failure_reason = f"supported MCP runtime communication failed: {exc}"
+
+    stdout_tail, stderr, returncode = finalize_process(process)
+    stdout = "".join(response_lines) + stdout_tail
+    all_response_lines = [line for line in stdout.splitlines() if line.strip()]
+    expected_count = len(messages)
+    valid_responses = valid_responses and len(all_response_lines) == expected_count
+    record = summarize_output(stdout.encode(), stderr.encode(), returncode)
+    record["responses_observed"] = len(all_response_lines)
     record["responses_valid"] = valid_responses
     evidence = [evidence_file(record)]
-    if not valid_responses or process.returncode != 0:
-        emit("not_verified", "supported MCP runtime did not produce the expected response", "runtime_failure", evidence)
+    if failure_reason or not valid_responses or returncode != 0:
+        emit(
+            "not_verified",
+            failure_reason or "supported MCP runtime did not produce the expected response",
+            "runtime_failure",
+            evidence,
+        )
     emit("verified", "supported MCP read-only request completed", None, evidence)
 
 emit("not_verified", "probe kind is outside the supported P1 executor boundary", "safety_blocked")
