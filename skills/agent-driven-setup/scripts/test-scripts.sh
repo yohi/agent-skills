@@ -1736,6 +1736,52 @@ PY
     diff -q "$fingerprint_before" "$fingerprint_after" >/dev/null
 }
 
+check_audit_unmatched_layer_path_is_unassigned() {
+  local repo="$TEMP_DIR/audit-unmatched-path-repo"
+  local report="$TEMP_DIR/audit-unmatched-path.stdout"
+  mkdir -p "$repo"
+  write_topology_fixture "$repo"
+
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+contract["configuration_branches"][0]["layers"].append(
+    {
+        "id": "unmatched-layer",
+        "kind": "settings",
+        "path": "unrelated/missing.ini",
+    }
+)
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+
+  capture_audit "$report" --contract contract.md "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert int(Path(sys.argv[2]).read_text()) == 0
+findings = [
+    finding
+    for finding in data["discrepancies"]
+    if finding["locator"].get("layer_id") == "unmatched-layer"
+]
+assert len(findings) == 1
+assert findings[0]["code"] == "missing_declared_path"
+assert findings[0]["affected_target_ids"] == ["unassigned"]
+PY
+}
+
 
 run_test "eval manifest parses" check_eval_manifest
 run_test "analysis detects nested scripts and lockfiles" check_analysis
@@ -1784,6 +1830,7 @@ run_test "audit writes both formats outside target" check_audit_writes_both_form
 run_test "audit rejects target-internal output directories" check_audit_rejects_target_internal_output_dir
 run_test "audit reports missing PyYAML without installing" check_audit_reports_dependency_unavailable_without_installing
 run_test "audit reports static topology discrepancies" check_audit_reports_static_topology
+run_test "audit assigns unmatched layer paths to unassigned" check_audit_unmatched_layer_path_is_unassigned
 
 if (( failures > 0 )); then
   exit 1

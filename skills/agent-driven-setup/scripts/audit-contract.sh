@@ -891,7 +891,7 @@ def target_ids_for_path(path, targets):
         normalized_source = value.replace("\\", "/").strip("/")
         if normalized_path == normalized_source or normalized_path.startswith(normalized_source + "/"):
             matches.append(target_id)
-    return matches or sorted(targets)
+    return matches
 
 
 def add_discrepancy(discrepancies, finding_state, code, message, affected_target_ids, locator):
