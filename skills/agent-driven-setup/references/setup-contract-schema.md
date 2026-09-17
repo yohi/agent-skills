@@ -108,7 +108,7 @@ for every required field and is equivalent to absence for optional fields.
 | `setup_target.<id>` | yes | Map key `<id>` matches `[a-z][a-z0-9_-]*` | Stable target ID used by every target reference. |
 | `target_type` | yes | `skill`, `mcp`, `plugin`, `hook`, `cli`, `service`, `other/custom` | Selects the target probe profile. |
 | `canonical_source.kind` | yes | `repository_path`, `url`, `registry`, `external_resource` | Selects the meaning of `value`. |
-| `canonical_source.value` | yes | Non-empty string | Repository paths are normalized relative to target root. |
+| `canonical_source.value` | yes | Non-empty string | For `kind: repository_path`, a normalized path relative to the repository root; absolute paths, `..` components, symlink escapes outside the repository, and empty values are forbidden. Other kinds use a non-empty kind-specific canonical identifier. |
 | `canonical_source.ref_mode` | yes | `immutable`, `mutable`, `not_applicable` | Declares reference mutability. |
 | `canonical_source.ref` | conditional | Required for immutable/mutable; forbidden for not_applicable | `null` is never a valid substitute. |
 | `runtime.mode` | yes | `process`, `in_process`, `agent_discovery`, `external_service`, `not_applicable` | Selects runtime handling. |
@@ -151,7 +151,7 @@ are schema errors; the parser must not invent a locator shape for them.
 | `required_capabilities` | no | Non-null list of unique IDs matching `[a-z][a-z0-9_-]*`; no matrix lookup in Spec 1. |
 | `probe.kind` | required for required item | `command`, `mcp_request`, or `agent_action`. |
 | `command` | command probe | Non-empty string `argv`; required `safety` is `read_only`, `mutating`, or `unknown`. |
-| `agent_action` | agent-action probe | `action` is `discovery` or `activation`; `adapter` is required. Adapter is `{kind: command, argv: non-empty string list, stdin: prompt|empty, safety: read_only|mutating|unknown}`. `prompt` is required only for `stdin: prompt` and forbidden for `empty`. |
+| `agent_action` | agent-action probe | `action` is `discovery` or `activation`; `adapter` is required. Adapter is `{kind: command}` with a non-empty string list `argv`, `stdin` set to `prompt` or `empty`, and `safety` set to `read_only`, `mutating`, or `unknown`. `prompt` is required only for `stdin: prompt` and forbidden for `empty`. |
 | `mcp_request` | MCP probe | `request` is `initialize`, `tool_discovery`, or `representative_tool_call`; any declared `safety` uses `read_only`, `mutating`, or `unknown`. |
 | initialize/tool discovery fields | fixed operations | `tool`, `arguments`, `safety`, and `mutation_surface_id` are forbidden. |
 | representative call fields | representative call | `tool` and object `arguments` are required; `safety` is `read_only`, `mutating`, or `unknown`. A read-only call has no `mutation_surface_id`; a temporary-fixture mode is distinguished by its required `mutation_surface_id`. |
