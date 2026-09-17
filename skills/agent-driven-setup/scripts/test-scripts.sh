@@ -375,6 +375,7 @@ plan = json.load(sys.stdin)
 assert plan["commands"][0]["category"] == "review"
 assert plan["commands"][1]["category"] == "safe"
 assert plan["makefile_targets"] == ["test", "lint"]
+assert "enhanced_workflow" not in plan
 '
 }
 
@@ -1094,6 +1095,67 @@ elif variant == "repository-source-symlink":
     contract["setup_target"]["cli_main"]["canonical_source"]["value"] = "linked-source"
 elif variant == "unknown-layer-kind":
     contract["configuration_branches"][0]["layers"][0]["kind"] = "future_layer"
+elif variant == "readonly-node":
+    target = contract["setup_target"]["cli_main"]
+    target["runtime"] = {
+        "mode": "process",
+        "command": ["node", "--version"],
+        "safety": "read_only",
+    }
+    contract["verification"]["targets"]["cli_main"]["items"][0]["probe"] = {
+        "kind": "command",
+        "argv": ["node", "--version"],
+        "safety": "read_only",
+    }
+elif variant == "mcp-initialize":
+    target = contract["setup_target"]["cli_main"]
+    target["target_type"] = "mcp"
+    target["runtime"] = {
+        "mode": "process",
+        "command": ["agent-setup-mcp-stdio-readonly"],
+        "safety": "read_only",
+    }
+    verification_target = contract["verification"]["targets"]["cli_main"]
+    verification_target["target_type"] = "mcp"
+    verification_target["items"][0] = {
+        "id": "mcp.initialize",
+        "phase": "initialize",
+        "target_type": "mcp",
+        "required_for_e2e": True,
+        "probe": {"kind": "mcp_request", "request": "initialize"},
+    }
+elif variant == "temporary-fixture":
+    target = contract["setup_target"]["cli_main"]
+    target["target_type"] = "mcp"
+    target["runtime"] = {
+        "mode": "process",
+        "command": ["agent-setup-mcp-stdio-readonly"],
+        "safety": "read_only",
+    }
+    verification_target = contract["verification"]["targets"]["cli_main"]
+    verification_target["target_type"] = "mcp"
+    verification_target["items"][0] = {
+        "id": "mcp.temporary",
+        "phase": "representative_operation",
+        "target_type": "mcp",
+        "required_for_e2e": True,
+        "probe": {
+            "kind": "mcp_request",
+            "request": "representative_tool_call",
+            "tool": "create_fixture",
+            "arguments": {"name": "test"},
+            "safety": "mutating",
+            "mutation_surface_id": "temporary-resource",
+        },
+    }
+    contract["external_effects"]["mutation_surfaces"] = [{
+        "id": "temporary-resource",
+        "scope": "external",
+        "kind": "external_resource",
+        "value": "test-fixture",
+        "snapshot": "required",
+        "cleanup_required": True,
+    }]
 elif variant != "valid":
     raise ValueError(f"unknown fixture variant: {variant}")
 
@@ -1853,9 +1915,283 @@ check_documentation_mutation_surface_investigation() {
 }
 
 check_documentation_process_runtime_safety_shape() {
-  grep -q 'runtime.safety' "$SKILL_DIR/references/setup-contract-schema.md" || return 1
-  grep -q 'read_only|mutating|unknown' "$SKILL_DIR/references/setup-contract-schema.md" || return 1
-  grep -q 'process only' "$SKILL_DIR/references/setup-contract-schema.md" || return 1
+  local schema="${1:-$SKILL_DIR/references/setup-contract-schema.md}"
+  local runtime_safety_line
+  local runtime_safety_marker="\`runtime.safety\`"
+
+  grep -qF 'runtime.safety' "$schema" || return 1
+  grep -qF 'process only' "$schema" || return 1
+  runtime_safety_line="$(grep -F "$runtime_safety_marker" "$schema" | grep -F 'process only' | head -n1)" || return 1
+  for value in read_only mutating unknown; do
+    local literal="\`$value\`"
+    [[ "$runtime_safety_line" == *"$literal"* ]] || return 1
+  done
+}
+
+check_documentation_process_runtime_safety_shape_rejects_unrelated_enum() {
+  local schema="$TEMP_DIR/invalid-runtime-safety-schema.md"
+  cp "$SKILL_DIR/references/setup-contract-schema.md" "$schema"
+  python3 - "$schema" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+lines = text.splitlines()
+for index, line in enumerate(lines):
+    if "`runtime.safety`" in line and "process only" in line:
+        lines[index] = "| `runtime.safety` | process only | `unsafe`; forbidden otherwise |"
+        break
+else:
+    raise AssertionError("runtime.safety schema line not found")
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+
+  if check_documentation_process_runtime_safety_shape "$schema"; then
+    return 1
+  fi
+}
+
+check_target_probe_classifier() {
+  local classify="$SCRIPT_DIR/run-target-probes.sh"
+  local result
+
+  result="$(printf '%s\n' '{"argv":["node","--version"],"declared_safety":"read_only"}' | bash "$classify" --classify-only)"
+  python3 - "$result" <<'PY'
+import json
+import sys
+
+assert json.loads(sys.argv[1]) == {
+    "effective_safety": "read_only",
+    "declaration_matches": True,
+}
+PY
+
+  result="$(printf '%s\n' '{"argv":["agent-setup-mcp-stdio-readonly"],"declared_safety":"read_only"}' | bash "$classify" --classify-only)"
+  python3 - "$result" <<'PY'
+import json
+import sys
+
+assert json.loads(sys.argv[1]) == {
+    "effective_safety": "read_only",
+    "declaration_matches": True,
+}
+PY
+
+  result="$(printf '%s\n' '{"argv":["npm","install"],"declared_safety":"mutating"}' | bash "$classify" --classify-only)"
+  python3 - "$result" <<'PY'
+import json
+import sys
+
+assert json.loads(sys.argv[1]) == {
+    "effective_safety": "mutating",
+    "declaration_matches": True,
+}
+PY
+
+  result="$(printf '%s\n' '{"argv":["unknown-command","--check"],"declared_safety":"read_only"}' | bash "$classify" --classify-only)"
+  python3 - "$result" <<'PY'
+import json
+import sys
+
+assert json.loads(sys.argv[1]) == {
+    "effective_safety": "unknown",
+    "declaration_matches": False,
+}
+PY
+}
+
+check_target_probe_readonly_command() {
+  local repo="$TEMP_DIR/probe-readonly-repo"
+  local evidence="$TEMP_DIR/probe-readonly-evidence"
+  local result="$TEMP_DIR/probe-readonly-result.json"
+  mkdir -p "$repo" "$evidence"
+  write_audit_contract "$repo/contract.md" readonly-node
+
+  bash "$SCRIPT_DIR/run-target-probes.sh" \
+    --contract contract.md \
+    --target cli_main \
+    --item cli.install \
+    --evidence-dir "$evidence" \
+    "$repo" >"$result"
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["target_id"] == "cli_main"
+assert data["item_id"] == "cli.install"
+assert data["status"] == "verified"
+assert data["error_category"] is None
+PY
+}
+
+check_target_probe_mcp_initialize() {
+  local repo="$TEMP_DIR/probe-mcp-repo"
+  local evidence="$TEMP_DIR/probe-mcp-evidence"
+  local fake_bin="$TEMP_DIR/probe-mcp-bin"
+  local path_bin="$TEMP_DIR/probe-mcp-path-bin"
+  local trusted_marker="$TEMP_DIR/probe-mcp-trusted"
+  local path_marker="$TEMP_DIR/probe-mcp-path"
+  local result="$TEMP_DIR/probe-mcp-result.json"
+  mkdir -p "$repo" "$evidence" "$fake_bin" "$path_bin"
+  write_audit_contract "$repo/contract.md" mcp-initialize
+  cat >"$fake_bin/agent-setup-mcp-stdio-readonly" <<SH
+#!/bin/sh
+touch "$trusted_marker"
+while IFS= read -r request; do
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+done
+SH
+  cat >"$path_bin/agent-setup-mcp-stdio-readonly" <<SH
+#!/bin/sh
+touch "$path_marker"
+while IFS= read -r request; do
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+done
+SH
+  chmod +x "$fake_bin/agent-setup-mcp-stdio-readonly"
+  chmod +x "$path_bin/agent-setup-mcp-stdio-readonly"
+
+  PATH="$path_bin:$PATH" AGENT_SETUP_MCP_FIXTURE="$fake_bin/agent-setup-mcp-stdio-readonly" \
+    bash "$SCRIPT_DIR/run-target-probes.sh" \
+    --contract contract.md \
+    --target cli_main \
+    --item mcp.initialize \
+    --evidence-dir "$evidence" \
+    "$repo" >"$result"
+
+  [[ -s "$result" ]] || return 1
+  python3 - "$result" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["status"] == "verified"
+assert data["error_category"] is None
+PY
+  [[ -e "$trusted_marker" ]]
+  [[ ! -e "$path_marker" ]]
+}
+
+check_target_probe_rejects_malformed_mcp_response() {
+  local repo="$TEMP_DIR/probe-malformed-mcp-repo"
+  local evidence="$TEMP_DIR/probe-malformed-mcp-evidence"
+  local fake_bin="$TEMP_DIR/probe-malformed-mcp-bin"
+  local result="$TEMP_DIR/probe-malformed-mcp-result.json"
+  mkdir -p "$repo" "$evidence" "$fake_bin"
+  write_audit_contract "$repo/contract.md" mcp-initialize
+  cat >"$fake_bin/agent-setup-mcp-stdio-readonly" <<'SH'
+#!/bin/sh
+while IFS= read -r request; do
+  printf '%s\n' 'not-json-rpc'
+done
+SH
+  chmod +x "$fake_bin/agent-setup-mcp-stdio-readonly"
+
+  AGENT_SETUP_MCP_FIXTURE="$fake_bin/agent-setup-mcp-stdio-readonly" \
+    bash "$SCRIPT_DIR/run-target-probes.sh" \
+    --contract contract.md \
+    --target cli_main \
+    --item mcp.initialize \
+    --evidence-dir "$evidence" \
+    "$repo" >"$result"
+
+  [[ -s "$result" ]] || return 1
+  python3 - "$result" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["status"] == "not_verified"
+assert data["error_category"] == "runtime_failure"
+PY
+}
+
+check_target_probe_blocks_temporary_fixture() {
+  local repo="$TEMP_DIR/probe-temporary-fixture-repo"
+  local evidence="$TEMP_DIR/probe-temporary-fixture-evidence"
+  local fake_bin="$TEMP_DIR/probe-temporary-fixture-bin"
+  local marker="$TEMP_DIR/probe-temporary-fixture-started"
+  local result="$TEMP_DIR/probe-temporary-fixture-result.json"
+  mkdir -p "$repo" "$evidence" "$fake_bin"
+  write_audit_contract "$repo/contract.md" temporary-fixture
+  cat >"$fake_bin/agent-setup-mcp-stdio-readonly" <<SH
+#!/bin/sh
+touch "$marker"
+SH
+  chmod +x "$fake_bin/agent-setup-mcp-stdio-readonly"
+
+  PATH="$fake_bin:$PATH" bash "$SCRIPT_DIR/run-target-probes.sh" \
+    --contract contract.md \
+    --target cli_main \
+    --item mcp.temporary \
+    --evidence-dir "$evidence" \
+    "$repo" >"$result"
+
+  [[ -s "$result" ]] || return 1
+  python3 - "$result" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["status"] == "not_verified"
+assert data["error_category"] == "safety_blocked"
+PY
+  [[ ! -e "$marker" ]]
+}
+
+check_target_probe_rejects_internal_evidence_dir_without_mutation() {
+  local repo="$TEMP_DIR/probe-internal-evidence-repo"
+  local evidence="$repo/.agent-setup/evidence"
+  mkdir -p "$repo"
+
+  if bash "$SCRIPT_DIR/run-target-probes.sh" \
+    --contract contract.md \
+    --target cli_main \
+    --item cli.install \
+    --evidence-dir "$evidence" \
+    "$repo" >/dev/null 2>/dev/null; then
+    return 1
+  fi
+  [[ ! -e "$evidence" ]]
+}
+
+check_verification_exposes_enhanced_workflow() {
+  local repo="$TEMP_DIR/enhanced-verification-plan-repo"
+  mkdir -p "$repo/.agent-setup"
+  cat >"$repo/.agent-setup/analyze.json" <<'JSON'
+{
+  "complexity_triggers": [
+    {"id": "mcp-runtime", "evidence": "mcp.json", "note": "runtime"}
+  ],
+  "env_template": false
+}
+JSON
+  write_analysis_fingerprint "$repo"
+
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" 2>/dev/null |
+    python3 -c '
+import json
+import sys
+
+plan = json.load(sys.stdin)
+enhanced = plan["enhanced_workflow"]
+assert enhanced["probe_executor"] == "run-target-probes.sh"
+assert enhanced["classify_only_command"] == "run-target-probes.sh --classify-only"
+assert enhanced["temporary_fixture_policy"] == "safety_blocked"
+'
+}
+
+check_documentation_enhanced_probe_boundary() {
+  grep -qF -- '--contract <repo-relative-path>' "$SKILL_DIR/SKILL.md" || return 1
+  grep -qF -- '--target <target-id>' "$SKILL_DIR/SKILL.md" || return 1
+  grep -qF -- '--item <verification-item-id>' "$SKILL_DIR/SKILL.md" || return 1
+  grep -qF -- '--evidence-dir <external-temp-dir>' "$SKILL_DIR/SKILL.md" || return 1
+  grep -qF -- 'requirements.txt' "$SKILL_DIR/SKILL.md" || return 1
+  grep -qF -- 'temporary_fixture' "$SKILL_DIR/SKILL.md" || return 1
+  grep -qF -- 'safety_blocked' "$SKILL_DIR/SKILL.md" || return 1
 }
 
 check_documentation_probe_safety_policy_v1_authority() {
@@ -1947,6 +2283,15 @@ run_test "documentation asserts P1 temporary_fixture handoff" check_documentatio
 run_test "documentation asserts safety declaration is not execution authority" check_documentation_safety_declaration_not_execution_authority
 run_test "documentation asserts simple-path preservation" check_documentation_simple_path_preserved
 run_test "audit assigns unmatched layer paths to unassigned" check_audit_unmatched_layer_path_is_unassigned
+run_test "documentation rejects unrelated runtime.safety enum text" check_documentation_process_runtime_safety_shape_rejects_unrelated_enum
+run_test "target probe classifier uses the fixed safety registry" check_target_probe_classifier
+run_test "target probe executes supported read-only commands" check_target_probe_readonly_command
+run_test "target probe executes the supported MCP initialize request" check_target_probe_mcp_initialize
+run_test "target probe rejects malformed MCP responses" check_target_probe_rejects_malformed_mcp_response
+run_test "target probe blocks temporary fixtures before process start" check_target_probe_blocks_temporary_fixture
+run_test "target probe rejects internal evidence dirs without mutation" check_target_probe_rejects_internal_evidence_dir_without_mutation
+run_test "verification exposes the enhanced probe workflow" check_verification_exposes_enhanced_workflow
+run_test "documentation defines the enhanced probe boundary" check_documentation_enhanced_probe_boundary
 
 if (( failures > 0 )); then
   exit 1

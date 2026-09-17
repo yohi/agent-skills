@@ -170,6 +170,11 @@ as `safe` or `review`. Dry-run guidance is represented by `dry_run_flag` and
 If setup verification is not possible in the current environment, report it as
 **unverified**, not as success.
 
+When the plan contains `enhanced_workflow`, do not stop after reading the
+legacy command plan. Continue with the Contract audit and target probe executor
+described below. The enhanced workflow is the executable path for repositories
+with complexity triggers.
+
 ### 8. Report results
 
 Return a completion report with:
@@ -306,6 +311,15 @@ bash /mnt/skills/user/agent-driven-setup/scripts/audit-contract.sh [repo-path]
 The audit emits `contract_discovery`, `observed_topology`, `discrepancies`,
 `schema_errors`, and `next_actions`. It performs no target-repository writes.
 
+Provision the enhanced-path dependency outside the target repository when it is
+not already available:
+
+```bash
+python3 -m pip install -r /mnt/skills/user/agent-driven-setup/requirements.txt
+```
+
+Do not install dependencies into the target repository during verification.
+
 The Contract records setup intent, target type, configuration branches,
 mutation surfaces (`external_effects`), process runtime declarations, and
 verification probes. For process runtime targets, `runtime.command` and
@@ -316,14 +330,58 @@ and argv classifier are owned by `run-target-probes.sh`; for dry-run reuse call
 `run-target-probes.sh --classify-only`.
 
 Spec 1 validates Contract shape but hands off items it cannot execute. P1
-automatic verification is limited to supported read-only command probes and the
-concrete MCP runtime fixture defined by the Design; everything else is handed off
-or reported as `safety_blocked`.
+automatic verification is limited to exact supported read-only command probes
+and the concrete MCP runtime fixture defined by the Design. Invoke one
+Contract-defined item at a time:
+
+```bash
+bash /mnt/skills/user/agent-driven-setup/scripts/run-target-probes.sh \
+  --contract <repo-relative-path> \
+  --target <target-id> \
+  --item <verification-item-id> \
+  --evidence-dir <external-temp-dir> \
+  [repo-path]
+```
+
+The executor applies the same Policy v1 gate immediately before a supported
+process starts. It executes only matching `read_only` probes from the fixed
+registry, including the supported MCP runtime fixture. Mutating, unknown, or
+safety-mismatched probes return `not_verified` with `safety_blocked` and do not
+start a target process. `temporary_fixture` probes are Contract-valid but are
+classified as unsupported for P1: normal verification returns
+`not_verified`/`safety_blocked`, while dry-run returns `not_executed`; neither
+the external operation nor cleanup is started.
+
+For the MCP runtime fixture, provision the executable outside the target
+repository and set `AGENT_SETUP_MCP_FIXTURE` to its absolute path. Verify that
+the path is executable and record its version or checksum before running the
+probe. The executor uses this caller-provided path rather than resolving the
+fixture from the target repository's `PATH`.
+
+For dry-run classification, send one JSON object to the same bundled executor:
+
+```bash
+printf '%s\n' '{"argv":["node","--version"],"declared_safety":"read_only"}' |
+  bash /mnt/skills/user/agent-driven-setup/scripts/run-target-probes.sh \
+    --classify-only
+```
+
+The classifier emits only `effective_safety` and `declaration_matches`, performs
+no Contract or target-repository I/O, and starts no target process. The
+enhanced workflow maps Contract-defined `temporary_fixture` items to
+`not_executed`; the classifier itself does not execute or report item status.
+The bundled executor is the canonical implementation. If an external executor is used,
+provision it outside the target repository before enhanced verification, verify
+its version or checksum and run `bash -n` on the entrypoint, then require the
+same argv JSON input, fixed result schema, and item-level CLI boundary above.
+Do not pass shell command strings or let an external executor bypass the
+bundled safety policy.
 
 - `agent_action` probes with `action: discovery` or `action: activation` are
   handed off to Skill discovery / activation.
 - `mcp_request` probes that reference a Contract-defined `temporary_fixture`
-  surface are handed off or reported as `safety_blocked`.
+  surface are handed off or reported as `safety_blocked`; they are never
+  automatically created, operated, or cleaned up in P1.
 
 When `analyze-repo.sh` reports no complexity triggers, continue with the standard
 simple-repository flow above.
