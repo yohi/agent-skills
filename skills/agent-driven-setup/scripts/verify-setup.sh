@@ -225,6 +225,20 @@ if makefile_path.exists():
 if data.get("env_template"):
     plan["notes"].append("Repository has an env template; verify secrets are handled per the secret policy before running any integration test.")
 
+complexity_triggers = data.get("complexity_triggers") or []
+if complexity_triggers:
+    plan["enhanced_workflow"] = {
+        "trigger_ids": [trigger.get("id") for trigger in complexity_triggers],
+        "audit_command": "audit-contract.sh",
+        "probe_executor": "run-target-probes.sh",
+        "classify_only_command": "run-target-probes.sh --classify-only",
+        "temporary_fixture_policy": "safety_blocked",
+        "note": (
+            "Use the Setup Contract audit and run-target-probes.sh for supported probes; "
+            "do not execute Contract-defined temporary fixtures automatically."
+        ),
+    }
+
 json.dump(plan, sys.stdout, indent=2, ensure_ascii=False)
 print()
 PY
