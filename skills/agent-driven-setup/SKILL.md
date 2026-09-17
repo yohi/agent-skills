@@ -157,6 +157,25 @@ Run:
 bash /mnt/skills/user/agent-driven-setup/scripts/verify-setup.sh [repo-path]
 ```
 
+The fixed CLI grammar is:
+
+```text
+verify-setup.sh [--dry-run] [--contract <repo-relative-path>] [--report <target-external-markdown-path>] <repo-path>
+```
+
+The `--report` destination must be outside the target repository.
+
+For enhanced repositories, execute the workflow in this order: audit gate -> capability assessment -> dependency-aware probe execution -> report -> handoff.
+The report keeps capability availability and target verification result as separate
+fields. Implementation completion is distinct from verification completion, and
+unresolved affected audit findings prevent E2E sign-off.
+
+The safety order is fixed: declare the Contract, classify through the executor
+(normal final gate or dry-run `--classify-only`), apply the P1 Skill support-boundary
+handoff before adapter admission, enforce the MCP process-start gate, then map
+ordinary `safety_blocked` items to `not_verified` and dry-run adapters to
+`not_executed`. `blocked_by` skips dependent probes.
+
 This emits a verification plan that classifies each repository-defined command
 as `safe` or `review`. Dry-run guidance is represented by `dry_run_flag` and
 `dry_run_command` when available. Then:
