@@ -1179,6 +1179,67 @@ PY
   check_audit_report_shape "$report"
 }
 
+check_audit_skips_unreadable_marker_scan_candidates() {
+  local repo="$TEMP_DIR/audit-unreadable-candidate-repo"
+  local report="$TEMP_DIR/audit-unreadable-candidate.json"
+  mkdir -p "$repo"
+  printf '\377\n' >"$repo/SETUP-CONTRACT.md"
+
+  capture_audit "$report" "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 0
+assert data["contract_discovery"] == {"status": "not_found", "source": "none"}
+assert data["schema_errors"] == []
+PY
+  check_audit_report_shape "$report"
+}
+
+check_audit_ignores_unreadable_marker_documents() {
+  local repo="$TEMP_DIR/audit-unreadable-marker-repo"
+  local report="$TEMP_DIR/audit-unreadable-marker.json"
+  mkdir -p "$repo"
+  printf '\377\n' >"$repo/README.md"
+
+  capture_audit "$report" "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 0
+assert data["contract_discovery"] == {"status": "not_found", "source": "none"}
+assert data["schema_errors"] == []
+PY
+  check_audit_report_shape "$report"
+}
+
+check_audit_reports_unreadable_selected_contract() {
+  local repo="$TEMP_DIR/audit-unreadable-selected-repo"
+  local report="$TEMP_DIR/audit-unreadable-selected.json"
+  mkdir -p "$repo"
+  printf '%s\n' '---' >"$repo/contract.md"
+  printf '\377\n' >>"$repo/contract.md"
+
+  capture_audit "$report" --contract contract.md "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 2
+assert data["contract_discovery"] == {
+    "status": "contract_error",
+    "source": "explicit",
+}
+assert data["schema_errors"]
+PY
+  check_audit_report_shape "$report"
+}
+
 check_audit_rejects_escaping_declared_path() {
   local repo="$TEMP_DIR/audit-escaping-repo"
   local report="$TEMP_DIR/audit-escaping.json"
@@ -1464,6 +1525,9 @@ run_test "audit gives explicit contract priority" check_audit_explicit_contract_
 run_test "audit rejects conflicting repository markers" check_audit_conflicting_repository_markers_are_ambiguous
 run_test "audit rejects ambiguous marker scan" check_audit_marker_scan_candidates_are_ambiguous
 run_test "audit reports deterministic not-found discovery" check_audit_not_found_is_deterministic
+run_test "audit skips unreadable marker scan candidates" check_audit_skips_unreadable_marker_scan_candidates
+run_test "audit ignores unreadable marker documents" check_audit_ignores_unreadable_marker_documents
+run_test "audit reports unreadable selected contracts" check_audit_reports_unreadable_selected_contract
 run_test "audit rejects escaping declared paths" check_audit_rejects_escaping_declared_path
 run_test "audit rejects malformed explicit frontmatter" check_audit_rejects_malformed_explicit_frontmatter
 run_test "audit rejects undefined handoffs" check_audit_rejects_undefined_handoff

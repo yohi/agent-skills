@@ -257,12 +257,15 @@ def find_markers():
         path = os.path.join(REPO_ROOT, filename)
         file_markers = []
         if os.path.isfile(path):
-            with open(path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.rstrip("\n").rstrip("\r")
-                    m = re.match(r"^<!-- agent-setup-contract: (\S+) -->$", line)
-                    if m:
-                        file_markers.append(m.group(1))
+            try:
+                with open(path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.rstrip("\n").rstrip("\r")
+                        m = re.match(r"^<!-- agent-setup-contract: (\S+) -->$", line)
+                        if m:
+                            file_markers.append(m.group(1))
+            except Exception:
+                file_markers = []
         markers.append(file_markers)
     return markers
 
@@ -270,11 +273,11 @@ def find_markers():
 def has_version_candidate(path):
     if not os.path.isfile(path):
         return False
-    with open(path, encoding="utf-8") as f:
-        first = f.readline()
-    if first.rstrip("\n").rstrip("\r") != "---":
-        return False
     try:
+        with open(path, encoding="utf-8") as f:
+            first = f.readline()
+        if first.rstrip("\n").rstrip("\r") != "---":
+            return False
         fm, _ = read_frontmatter(path)
     except Exception:
         return False
@@ -840,7 +843,10 @@ def main():
     next_actions = []
 
     if contract_path is not None:
-        fm, fm_err = read_frontmatter(contract_path)
+        try:
+            fm, fm_err = read_frontmatter(contract_path)
+        except Exception:
+            fm, fm_err = None, "unable to read contract file"
         if fm is None:
             err("invalid_frontmatter", fm_err)
             discovery = {
