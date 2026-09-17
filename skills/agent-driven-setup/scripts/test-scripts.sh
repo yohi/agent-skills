@@ -131,7 +131,7 @@ SH
 
   # Webhook URL referenced in docs
   mkdir -p "$repo/docs"
-  cat > "$repo/docs/webhooks.md" <<'MD'
+  cat > "$repo/docs/web|hooks.md" <<'MD'
 Notifications are delivered to https://hooks.example.invalid/abc123 and
 also POSTed to https://webhooks.example.invalid/notify.
 MD
@@ -148,6 +148,8 @@ for t in data["complexity_triggers"]:
     assert set(t) == {"id", "evidence", "note"}, t
     assert all(isinstance(v, str) and v for v in t.values())
     assert "install_docs" in data
+    if t["id"] == "webhook-url":
+        assert t["evidence"] == "docs/web|hooks.md", t
 '
 }
 
@@ -1787,6 +1789,52 @@ PY
     diff -q "$fingerprint_before" "$fingerprint_after" >/dev/null
 }
 
+check_audit_unmatched_layer_path_is_unassigned() {
+  local repo="$TEMP_DIR/audit-unmatched-path-repo"
+  local report="$TEMP_DIR/audit-unmatched-path.stdout"
+  mkdir -p "$repo"
+  write_topology_fixture "$repo"
+
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+contract["configuration_branches"][0]["layers"].append(
+    {
+        "id": "unmatched-layer",
+        "kind": "settings",
+        "path": "unrelated/missing.ini",
+    }
+)
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+
+  capture_audit "$report" --contract contract.md "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert int(Path(sys.argv[2]).read_text()) == 0
+findings = [
+    finding
+    for finding in data["discrepancies"]
+    if finding["locator"].get("layer_id") == "unmatched-layer"
+]
+assert len(findings) == 1
+assert findings[0]["code"] == "missing_declared_path"
+assert findings[0]["affected_target_ids"] == ["unassigned"]
+PY
+}
+
 
 check_documentation_contract_marker_syntax() {
   grep -q '<!-- agent-setup-contract:' "$SKILL_DIR/references/setup-contract-schema.md" || return 1
@@ -1898,6 +1946,7 @@ run_test "documentation asserts P1 Skill discovery/activation handoff" check_doc
 run_test "documentation asserts P1 temporary_fixture handoff" check_documentation_p1_temporary_fixture_handoff
 run_test "documentation asserts safety declaration is not execution authority" check_documentation_safety_declaration_not_execution_authority
 run_test "documentation asserts simple-path preservation" check_documentation_simple_path_preserved
+run_test "audit assigns unmatched layer paths to unassigned" check_audit_unmatched_layer_path_is_unassigned
 
 if (( failures > 0 )); then
   exit 1
