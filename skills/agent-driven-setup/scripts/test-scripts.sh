@@ -131,7 +131,7 @@ SH
 
   # Webhook URL referenced in docs
   mkdir -p "$repo/docs"
-  cat > "$repo/docs/webhooks.md" <<'MD'
+  cat > "$repo/docs/web|hooks.md" <<'MD'
 Notifications are delivered to https://hooks.example.invalid/abc123 and
 also POSTed to https://webhooks.example.invalid/notify.
 MD
@@ -148,6 +148,8 @@ for t in data["complexity_triggers"]:
     assert set(t) == {"id", "evidence", "note"}, t
     assert all(isinstance(v, str) and v for v in t.values())
     assert "install_docs" in data
+    if t["id"] == "webhook-url":
+        assert t["evidence"] == "docs/web|hooks.md", t
 '
 }
 

@@ -272,7 +272,25 @@ import sys, json
 def parse_list(s):
     if not s:
         return []
-    return [item for item in s.split('|') if item]
+    items = []
+    current = []
+    index = 0
+    while index < len(s):
+        char = s[index]
+        if char == '\\' and index + 1 < len(s) and s[index + 1] == '|':
+            current.append('|')
+            index += 2
+        elif char == '|':
+            if current:
+                items.append(''.join(current))
+                current = []
+            index += 1
+        else:
+            current.append(char)
+            index += 1
+    if current:
+        items.append(''.join(current))
+    return items
 
 def boolify(s):
     return str(s).lower() == 'true'
