@@ -194,7 +194,7 @@ def is_str(value):
 
 
 def is_str_list(value):
-    return isinstance(value, list) and all(is_str(item) and item for item in value)
+    return isinstance(value, list) and bool(value) and all(is_str(item) and item for item in value)
 
 
 def is_normalized_relative_path(path):
@@ -381,9 +381,16 @@ def validate_targets(data):
         if not isinstance(source, dict):
             err("invalid_canonical_source", f"target {target_id} canonical_source is not a mapping")
         else:
-            if source.get("kind") not in SOURCE_KINDS:
+            source_kind = source.get("kind")
+            if source_kind not in SOURCE_KINDS:
                 err("invalid_canonical_source", f"target {target_id} canonical_source.kind invalid")
-            if not is_str(source.get("value")) or not source.get("value"):
+            if source_kind == "repository_path":
+                if not path_stays_inside(source.get("value")):
+                    err(
+                        "invalid_canonical_source",
+                        f"target {target_id} repository_path canonical_source.value must be a normalized repository-relative path inside the target repository",
+                    )
+            elif not is_str(source.get("value")) or not source.get("value"):
                 err("invalid_canonical_source", f"target {target_id} canonical_source.value must be a non-empty string")
             if source.get("ref_mode") not in REF_MODES:
                 err("invalid_canonical_source", f"target {target_id} canonical_source.ref_mode invalid")

@@ -1018,6 +1018,27 @@ elif variant == "invalid-capabilities":
     contract["verification"]["targets"]["cli_main"]["items"][0][
         "required_capabilities"
     ] = ["valid_capability", "valid_capability", "Invalid"]
+elif variant == "empty-runtime-command":
+    contract["setup_target"]["cli_main"]["runtime"]["command"] = []
+elif variant == "empty-probe-argv":
+    contract["verification"]["targets"]["cli_main"]["items"][0]["probe"]["argv"] = []
+elif variant == "empty-adapter-argv":
+    contract["verification"]["targets"]["cli_main"]["items"][0]["probe"] = {
+        "kind": "agent_action",
+        "action": "discovery",
+        "adapter": {
+            "kind": "command",
+            "argv": [],
+            "stdin": "empty",
+            "safety": "read_only",
+        },
+    }
+elif variant == "repository-source-parent-escape":
+    contract["setup_target"]["cli_main"]["canonical_source"]["value"] = "../outside"
+elif variant == "repository-source-absolute":
+    contract["setup_target"]["cli_main"]["canonical_source"]["value"] = "/etc/passwd"
+elif variant == "repository-source-symlink":
+    contract["setup_target"]["cli_main"]["canonical_source"]["value"] = "linked-source"
 elif variant == "unknown-layer-kind":
     contract["configuration_branches"][0]["layers"][0]["kind"] = "future_layer"
 elif variant != "valid":
@@ -1240,6 +1261,53 @@ assert any(error["code"] == "blocked_by_cycle" for error in data["schema_errors"
 PY
 }
 
+check_audit_rejects_empty_argv_lists() {
+  local repo="$TEMP_DIR/audit-empty-argv-repo"
+  local report
+  local expected
+  mkdir -p "$repo"
+
+  for variant in empty-runtime-command empty-probe-argv empty-adapter-argv; do
+    report="$repo/$variant.json"
+    write_audit_contract "$repo/$variant.md" "$variant"
+    capture_audit "$report" --contract "$variant.md" "$repo"
+    case "$variant" in
+      empty-runtime-command) expected="invalid_runtime" ;;
+      empty-probe-argv|empty-adapter-argv) expected="invalid_probe" ;;
+    esac
+    python3 - "$report" "$report.status" "$expected" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 2
+assert any(error["code"] == sys.argv[3] for error in data["schema_errors"])
+PY
+  done
+}
+
+check_audit_rejects_invalid_repository_source_paths() {
+  local repo="$TEMP_DIR/audit-invalid-source-repo"
+  local outside="$TEMP_DIR/audit-source-outside"
+  local report
+  mkdir -p "$repo" "$outside"
+  ln -s "$outside" "$repo/linked-source"
+
+  for variant in repository-source-parent-escape repository-source-absolute repository-source-symlink; do
+    report="$repo/$variant.json"
+    write_audit_contract "$repo/$variant.md" "$variant"
+    capture_audit "$report" --contract "$variant.md" "$repo"
+    python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert int(open(sys.argv[2]).read()) == 2
+assert any(error["code"] == "invalid_canonical_source" for error in data["schema_errors"])
+PY
+  done
+}
+
 check_audit_validates_all_safety_enums_without_execution() {
   local repo="$TEMP_DIR/audit-safety-repo"
   local report="$TEMP_DIR/audit-safety.json"
@@ -1400,6 +1468,8 @@ run_test "audit rejects escaping declared paths" check_audit_rejects_escaping_de
 run_test "audit rejects malformed explicit frontmatter" check_audit_rejects_malformed_explicit_frontmatter
 run_test "audit rejects undefined handoffs" check_audit_rejects_undefined_handoff
 run_test "audit rejects blocked-by cycles" check_audit_rejects_blocked_by_cycle
+run_test "audit rejects empty argv lists" check_audit_rejects_empty_argv_lists
+run_test "audit rejects invalid repository source paths" check_audit_rejects_invalid_repository_source_paths
 run_test "audit validates all safety enums without execution" check_audit_validates_all_safety_enums_without_execution
 run_test "audit validates capability IDs without matrix lookup" check_audit_validates_capability_ids_without_matrix_lookup
 run_test "audit rejects unknown layer kinds" check_audit_rejects_unknown_layer_kind
