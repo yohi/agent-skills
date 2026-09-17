@@ -1494,6 +1494,295 @@ assert not Path(sys.argv[3]).exists()
 PY
 }
 
+write_topology_fixture() {
+  local repo="$1"
+
+  mkdir -p "$repo/src/config" "$repo/other"
+
+  cat >"$repo/src/config/generated.yaml" <<'YAML'
+database:
+  host: localhost
+YAML
+  cat >"$repo/src/client.py" <<'PY'
+import importlib
+
+
+def bootstrap(module_name):
+    return importlib.import_module(module_name)
+PY
+  printf '%s\n' 'usage: app [--verbose]' >"$repo/src/config/cli.txt"
+  printf '%s\n' 'valid target documentation' >"$repo/other/valid.md"
+
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+contract = {
+    "setup_contract_schema_version": 1,
+    "setup_intent": "Test static topology scanning",
+    "setup_target": {
+        "cli_main": {
+            "target_type": "cli",
+            "canonical_source": {
+                "kind": "repository_path",
+                "value": "src",
+                "ref_mode": "not_applicable",
+            },
+            "runtime": {
+                "mode": "process",
+                "command": ["server"],
+                "safety": "read_only",
+            },
+        },
+        "other_valid": {
+            "target_type": "other/custom",
+            "canonical_source": {
+                "kind": "repository_path",
+                "value": "other",
+                "ref_mode": "not_applicable",
+            },
+            "runtime": {"mode": "in_process"},
+        },
+    },
+    "complexity_triggers": [],
+    "configuration_branches": [
+        {
+            "id": "main",
+            "layers": [
+                {
+                    "id": "generated-config",
+                    "kind": "generated_config",
+                    "path": "src/config/generated.yaml",
+                    "key": "server.port",
+                },
+                {
+                    "id": "runtime-consumer",
+                    "kind": "runtime_consumer",
+                    "path": "src/client.py",
+                    "symbol": "connect_mcp",
+                },
+                {
+                    "id": "server-cli",
+                    "kind": "cli",
+                    "path": "src/config/generated.yaml",
+                    "option": "--missing-flag",
+                },
+                {
+                    "id": "other-layer",
+                    "kind": "settings",
+                    "path": "other/valid.md",
+                    "key": "valid",
+                },
+            ],
+        }
+    ],
+    "installation": {
+        "cli_main": [
+            {"id": "install-main", "reference": {"kind": "path", "path": "src/client.py"}}
+        ],
+        "other_valid": [
+            {"id": "install-other", "reference": {"kind": "path", "path": "other/valid.md"}}
+        ],
+    },
+    "registration": {"cli_main": [], "other_valid": []},
+    "discovery": {"cli_main": [], "other_valid": []},
+    "activation": {"cli_main": [], "other_valid": []},
+    "verification": {
+        "targets": {
+            "cli_main": {
+                "target_type": "cli",
+                "items": [
+                    {
+                        "id": "cli.install",
+                        "phase": "installation",
+                        "target_type": "cli",
+                        "required_for_e2e": True,
+                        "blocked_by": [],
+                        "probe": {
+                            "kind": "command",
+                            "argv": ["printf", "ok"],
+                            "safety": "read_only",
+                        },
+                    }
+                ],
+            },
+            "other_valid": {
+                "target_type": "other/custom",
+                "items": [
+                    {
+                        "id": "other.install",
+                        "phase": "installation",
+                        "target_type": "other/custom",
+                        "required_for_e2e": True,
+                        "blocked_by": [],
+                        "probe": {
+                            "kind": "command",
+                            "argv": ["printf", "ok"],
+                            "safety": "read_only",
+                        },
+                    }
+                ],
+            },
+        }
+    },
+    "handoffs": {},
+    "external_effects": {"mutation_surfaces": []},
+}
+
+path = Path(sys.argv[1])
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+}
+
+repo_file_fingerprint() {
+  (cd "$1" && find . -type f -print0 | sort -z | xargs -0 sha256sum) | sha256sum
+}
+
+check_audit_reports_static_topology() {
+  local repo="$TEMP_DIR/audit-topology-repo"
+  local output_dir="$TEMP_DIR/audit-topology-output"
+  local report="$TEMP_DIR/audit-topology.stdout"
+  local fingerprint_before="$TEMP_DIR/audit-topology.before"
+  local fingerprint_after="$TEMP_DIR/audit-topology.after"
+  mkdir -p "$repo" "$output_dir"
+  write_topology_fixture "$repo"
+  repo_file_fingerprint "$repo" >"$fingerprint_before"
+
+  capture_audit "$report" --format both --output-dir "$output_dir" --contract contract.md "$repo"
+  local both_status=0
+  python3 - "$report" "$report.status" "$output_dir/audit-report.json" "$output_dir/audit-report.md" <<'PY' || both_status=1
+import json
+import sys
+from pathlib import Path
+
+assert int(Path(sys.argv[2]).read_text()) == 0
+stdout = Path(sys.argv[1]).read_text(encoding="utf-8")
+data = json.loads(stdout)  # --format both keeps JSON on stdout
+assert list(data) == [
+    "contract_discovery",
+    "observed_topology",
+    "discrepancies",
+    "schema_errors",
+    "next_actions",
+]
+assert data["schema_errors"] == []
+assert data["contract_discovery"]["status"] == "found"
+
+topology = data["observed_topology"]
+assert isinstance(topology, dict)
+assert topology["scanned_layer_count"] == 4
+assert topology["scanned_phase_reference_count"] == 2
+consumers = [
+    entry
+    for entry in topology["layer_observations"]
+    if entry["layer_id"] == "runtime-consumer"
+]
+assert len(consumers) == 1
+assert consumers[0]["path_exists"] is True
+assert consumers[0]["symbol_present"] is False
+assert consumers[0]["dynamic_wiring"] is True
+
+findings = data["discrepancies"]
+confirmed = [f for f in findings if f["finding_state"] == "confirmed"]
+candidates = [f for f in findings if f["finding_state"] == "candidate"]
+unresolved = [f for f in findings if f["finding_state"] == "unresolved"]
+assert len(findings) == 3
+assert len(confirmed) == 1 and len(candidates) == 1 and len(unresolved) == 1
+assert confirmed[0]["code"] == "absent_generated_config_key"
+assert confirmed[0]["affected_target_ids"] == ["cli_main"]
+assert unresolved[0]["code"] == "indirect_runtime_consumer"
+assert candidates[0]["code"] == "unmatched_cli_option"
+assert all(f["affected_target_ids"] for f in findings)
+assert all(
+    set(f) == {"finding_state", "code", "message", "affected_target_ids", "locator"}
+    for f in findings
+)
+assert all("other_valid" not in f["affected_target_ids"] for f in findings)
+assert len(data["next_actions"]) == len(findings)
+assert data["next_actions"]
+
+json_report = Path(sys.argv[3])
+markdown_report = Path(sys.argv[4])
+assert json_report.is_file() and markdown_report.is_file()
+assert json.loads(json_report.read_text(encoding="utf-8")) == data
+markdown = markdown_report.read_text(encoding="utf-8")
+assert "## Observed Topology" in markdown
+for state in ("confirmed", "candidate", "unresolved"):
+    assert markdown.count(f"- [{state}] ") == sum(
+        1 for f in findings if f["finding_state"] == state
+    )
+assert "## Next Actions" in markdown
+PY
+  local markdown_status=0
+  python3 - "$output_dir/audit-report.md" <<'PY' || markdown_status=1
+import sys
+from pathlib import Path
+
+markdown = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert "## Observed Topology" in markdown
+assert "- [confirmed] " in markdown
+assert "- [candidate] " in markdown
+assert "- [unresolved] " in markdown
+assert "## Next Actions" in markdown
+PY
+
+  repo_file_fingerprint "$repo" >"$fingerprint_after"
+  [[ $both_status -eq 0 && $markdown_status -eq 0 ]] &&
+    diff -q "$fingerprint_before" "$fingerprint_after" >/dev/null
+}
+
+check_audit_unmatched_layer_path_is_unassigned() {
+  local repo="$TEMP_DIR/audit-unmatched-path-repo"
+  local report="$TEMP_DIR/audit-unmatched-path.stdout"
+  mkdir -p "$repo"
+  write_topology_fixture "$repo"
+
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+contract["configuration_branches"][0]["layers"].append(
+    {
+        "id": "unmatched-layer",
+        "kind": "settings",
+        "path": "unrelated/missing.ini",
+    }
+)
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+
+  capture_audit "$report" --contract contract.md "$repo"
+  python3 - "$report" "$report.status" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert int(Path(sys.argv[2]).read_text()) == 0
+findings = [
+    finding
+    for finding in data["discrepancies"]
+    if finding["locator"].get("layer_id") == "unmatched-layer"
+]
+assert len(findings) == 1
+assert findings[0]["code"] == "missing_declared_path"
+assert findings[0]["affected_target_ids"] == ["unassigned"]
+PY
+}
+
+
 run_test "eval manifest parses" check_eval_manifest
 run_test "analysis detects nested scripts and lockfiles" check_analysis
 run_test "analysis uses package runner for npm tests" check_analysis_uses_package_runner_for_tests
@@ -1540,6 +1829,8 @@ run_test "audit rejects unknown layer kinds" check_audit_rejects_unknown_layer_k
 run_test "audit writes both formats outside target" check_audit_writes_both_formats_only_outside_target
 run_test "audit rejects target-internal output directories" check_audit_rejects_target_internal_output_dir
 run_test "audit reports missing PyYAML without installing" check_audit_reports_dependency_unavailable_without_installing
+run_test "audit reports static topology discrepancies" check_audit_reports_static_topology
+run_test "audit assigns unmatched layer paths to unassigned" check_audit_unmatched_layer_path_is_unassigned
 
 if (( failures > 0 )); then
   exit 1

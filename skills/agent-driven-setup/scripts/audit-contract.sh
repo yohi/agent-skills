@@ -813,12 +813,391 @@ def validate_verification(data, targets, eligible_surfaces):
             visit(iid)
 
 
+def declared_path_info(relative):
+    """Return safe, read-only information for a target-relative path."""
+    if not is_normalized_relative_path(relative) or not path_stays_inside(relative):
+        return None
+    full = os.path.realpath(os.path.join(REPO_ROOT, relative))
+    return {
+        "full": full,
+        "exists": os.path.exists(full),
+        "is_file": os.path.isfile(full),
+    }
+
+
+def read_declared_text(relative):
+    info = declared_path_info(relative)
+    if info is None or not info["is_file"]:
+        return None
+    try:
+        with open(info["full"], encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def token_present(text, token):
+    if text is None:
+        return False
+    pattern = r"(?<![A-Za-z0-9_-])" + re.escape(token) + r"(?![A-Za-z0-9_-])"
+    return re.search(pattern, text) is not None
+
+
+def config_key_present(text, key):
+    if text is None:
+        return False
+    try:
+        parsed = yaml.safe_load(text)
+    except yaml.YAMLError:
+        parsed = None
+    if isinstance(parsed, dict):
+        if key in parsed:
+            return True
+        current = parsed
+        for part in key.split("."):
+            if not isinstance(current, dict) or part not in current:
+                return False
+            current = current[part]
+        return True
+    return re.search(r"(?m)^\s*" + re.escape(key) + r"\s*:", text) is not None
+
+
+def has_dynamic_wiring(text):
+    if text is None:
+        return False
+    patterns = (
+        r"\bimportlib\.import_module\s*\(",
+        r"\b__import__\s*\(",
+        r"\bgetattr\s*\(",
+        r"\b(?:import|require)\s*\(",
+        r"\bdynamic[_ -]?import\b",
+        r"\breflection\b",
+    )
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
+
+
+def target_ids_for_path(path, targets):
+    if not path:
+        return sorted(targets)
+    normalized_path = path.replace("\\", "/").strip("/")
+    matches = []
+    for target_id in sorted(targets):
+        source = targets[target_id].get("canonical_source", {})
+        if source.get("kind") != "repository_path":
+            continue
+        value = source.get("value")
+        if not is_str(value):
+            continue
+        normalized_source = value.replace("\\", "/").strip("/")
+        if normalized_path == normalized_source or normalized_path.startswith(normalized_source + "/"):
+            matches.append(target_id)
+    return matches
+
+
+def add_discrepancy(discrepancies, finding_state, code, message, affected_target_ids, locator):
+    targets = sorted(set(affected_target_ids))
+    if not targets:
+        targets = ["unassigned"]
+    discrepancies.append(
+        {
+            "finding_state": finding_state,
+            "code": code,
+            "message": message,
+            "affected_target_ids": targets,
+            "locator": locator,
+        }
+    )
+
+
+def scan_layer(branch_id, layer, targets, observations, discrepancies):
+    layer_id = layer["id"]
+    kind = layer["kind"]
+    path = layer.get("path")
+    info = declared_path_info(path) if path is not None else None
+    text = read_declared_text(path) if info and info["is_file"] else None
+    observation = {
+        "branch_id": branch_id,
+        "layer_id": layer_id,
+        "kind": kind,
+        "path_exists": info["exists"] if info is not None else None,
+        "dynamic_wiring": False,
+    }
+    if path is not None:
+        observation["path"] = path
+
+    target_ids = target_ids_for_path(path, targets)
+    locator = {"branch_id": branch_id, "layer_id": layer_id, "kind": kind}
+    if path is not None:
+        locator["path"] = path
+
+    if kind == "generated_config":
+        key = layer["key"]
+        present = info is not None and info["is_file"] and config_key_present(text, key)
+        observation["key"] = key
+        observation["key_present"] = present
+        if info is None or not info["exists"]:
+            add_discrepancy(
+                discrepancies,
+                "confirmed",
+                "missing_generated_config_path",
+                f"generated config path is missing: {path}",
+                target_ids,
+                locator,
+            )
+        elif not present:
+            add_discrepancy(
+                discrepancies,
+                "confirmed",
+                "absent_generated_config_key",
+                f"generated config key is absent: {key} ({path})",
+                target_ids,
+                locator,
+            )
+    elif kind == "runtime_consumer":
+        symbol = layer["symbol"]
+        present = info is not None and info["is_file"] and token_present(text, symbol)
+        dynamic = info is not None and info["is_file"] and has_dynamic_wiring(text)
+        observation["symbol"] = symbol
+        observation["symbol_present"] = present
+        observation["dynamic_wiring"] = dynamic
+        if info is None or not info["exists"]:
+            add_discrepancy(
+                discrepancies,
+                "confirmed",
+                "missing_runtime_consumer_path",
+                f"runtime consumer path is missing: {path}",
+                target_ids,
+                locator,
+            )
+        elif not present and dynamic:
+            add_discrepancy(
+                discrepancies,
+                "unresolved",
+                "indirect_runtime_consumer",
+                f"runtime consumer is wired dynamically; symbol was not found: {symbol} ({path})",
+                target_ids,
+                locator,
+            )
+        elif not present:
+            add_discrepancy(
+                discrepancies,
+                "confirmed",
+                "missing_runtime_consumer_symbol",
+                f"runtime consumer symbol is absent: {symbol} ({path})",
+                target_ids,
+                locator,
+            )
+    elif kind == "cli":
+        option = layer["option"]
+        present = info is not None and info["is_file"] and token_present(text, option)
+        observation["option"] = option
+        observation["option_present"] = present
+        if path is not None and (info is None or not info["exists"]):
+            add_discrepancy(
+                discrepancies,
+                "confirmed",
+                "missing_cli_path",
+                f"CLI locator path is missing: {path}",
+                target_ids,
+                locator,
+            )
+        elif path is not None and not present:
+            add_discrepancy(
+                discrepancies,
+                "candidate",
+                "unmatched_cli_option",
+                f"CLI option was not found in the declared path: {option} ({path})",
+                target_ids,
+                locator,
+            )
+    elif kind == "env":
+        key = layer["key"]
+        present = info is not None and info["is_file"] and token_present(text, key)
+        observation["key"] = key
+        observation["key_present"] = present if path is not None else None
+        if path is not None and (info is None or not info["exists"]):
+            add_discrepancy(
+                discrepancies,
+                "confirmed",
+                "missing_env_path",
+                f"environment locator path is missing: {path}",
+                target_ids,
+                locator,
+            )
+        elif path is not None and not present:
+            add_discrepancy(
+                discrepancies,
+                "candidate",
+                "unmatched_env_key",
+                f"environment key was not found in the declared path: {key} ({path})",
+                target_ids,
+                locator,
+            )
+    elif path is not None and (info is None or not info["exists"]):
+        add_discrepancy(
+            discrepancies,
+            "confirmed",
+            "missing_declared_path",
+            f"declared layer path is missing: {path}",
+            target_ids,
+            locator,
+        )
+
+    observations.append(observation)
+
+
+def scan_phase_reference(phase_name, target_id, entry, observations, discrepancies):
+    reference = entry["reference"]
+    reference_kind = reference["kind"]
+    observation = {
+        "phase": phase_name,
+        "target_id": target_id,
+        "reference_id": entry["id"],
+        "reference_kind": reference_kind,
+    }
+    locator = {
+        "phase": phase_name,
+        "target_id": target_id,
+        "reference_id": entry["id"],
+        "reference_kind": reference_kind,
+    }
+    if reference_kind == "external_resource":
+        observation["value"] = reference["value"]
+        observation["resolvable"] = False
+        observations.append(observation)
+        return
+
+    path = reference["path"]
+    info = declared_path_info(path)
+    text = read_declared_text(path) if info and info["is_file"] else None
+    observation["path"] = path
+    observation["path_exists"] = info["exists"] if info is not None else False
+    observation["dynamic_wiring"] = False
+    locator["path"] = path
+    if info is None or not info["exists"]:
+        add_discrepancy(
+            discrepancies,
+            "confirmed",
+            "missing_phase_reference_path",
+            f"phase reference path is missing: {path}",
+            [target_id],
+            locator,
+        )
+    elif "symbol" in reference:
+        symbol = reference["symbol"]
+        present = token_present(text, symbol)
+        dynamic = has_dynamic_wiring(text)
+        observation["symbol"] = symbol
+        observation["symbol_present"] = present
+        observation["dynamic_wiring"] = dynamic
+        if not present and dynamic:
+            add_discrepancy(
+                discrepancies,
+                "unresolved",
+                "indirect_phase_reference",
+                f"phase reference is wired dynamically; symbol was not found: {symbol} ({path})",
+                [target_id],
+                locator,
+            )
+        elif not present:
+            add_discrepancy(
+                discrepancies,
+                "confirmed",
+                "missing_phase_reference_symbol",
+                f"phase reference symbol is absent: {symbol} ({path})",
+                [target_id],
+                locator,
+            )
+    observations.append(observation)
+
+
+def scan_topology(data, targets):
+    discrepancies = []
+    layer_observations = []
+    for branch in data["configuration_branches"]:
+        for layer in branch["layers"]:
+            scan_layer(branch["id"], layer, targets, layer_observations, discrepancies)
+
+    phase_observations = []
+    phase_reference_count = 0
+    for phase_name in ("installation", "registration", "discovery", "activation"):
+        for target_id in sorted(data[phase_name]):
+            for entry in data[phase_name][target_id]:
+                phase_reference_count += 1
+                scan_phase_reference(
+                    phase_name,
+                    target_id,
+                    entry,
+                    phase_observations,
+                    discrepancies,
+                )
+
+    observed_topology = {
+        "scanned_layer_count": len(layer_observations),
+        "scanned_phase_reference_count": phase_reference_count,
+        "layer_observations": layer_observations,
+        "phase_observations": phase_observations,
+    }
+    return observed_topology, discrepancies
+
+
+NEXT_ACTIONS = {
+    "absent_generated_config_key": "Confirm the generated configuration key or update the declared locator.",
+    "missing_generated_config_path": "Restore the generated configuration file or update the declared path.",
+    "indirect_runtime_consumer": "Review the dynamic runtime wiring and confirm the actual consumer symbol.",
+    "missing_runtime_consumer_path": "Restore the runtime consumer file or update the declared path.",
+    "missing_runtime_consumer_symbol": "Confirm the runtime consumer symbol or update the declared locator.",
+    "unmatched_cli_option": "Confirm the CLI option in the actual entry point or update the declared locator.",
+    "missing_cli_path": "Restore the CLI entry point or update the declared path.",
+    "unmatched_env_key": "Confirm the environment key in the actual configuration source.",
+    "missing_env_path": "Restore the environment configuration file or update the declared path.",
+    "missing_declared_path": "Restore the declared layer path or update the Contract locator.",
+    "missing_phase_reference_path": "Restore the phase reference path or update the Contract reference.",
+    "indirect_phase_reference": "Review the dynamic phase wiring and confirm the actual symbol.",
+    "missing_phase_reference_symbol": "Confirm the phase reference symbol or update the Contract reference.",
+}
+
+
+def build_next_actions(discrepancies):
+    return [
+        {
+            "code": finding["code"],
+            "affected_target_ids": finding["affected_target_ids"],
+            "action": NEXT_ACTIONS.get(
+                finding["code"],
+                "Review the finding and confirm the Contract locator.",
+            ),
+        }
+        for finding in discrepancies
+    ]
+
+
 def render_markdown(report):
-    lines = ["# Setup Contract Audit Report", "", "```yaml", "contract_discovery:", f"  status: {report['contract_discovery']['status']}"]
+    lines = ["# Setup Contract Audit Report", "", "## Contract Discovery", "", "```yaml", "contract_discovery:", f"  status: {report['contract_discovery']['status']}"]
     if "path" in report["contract_discovery"]:
         lines.append(f"  path: {report['contract_discovery']['path']}")
     lines.append(f"  source: {report['contract_discovery']['source']}")
     lines.extend(["```", ""])
+    topology = report["observed_topology"]
+    if topology is not None:
+        lines.append("## Observed Topology")
+        lines.append(f"- Scanned layers: {topology['scanned_layer_count']}")
+        lines.append(f"- Scanned phase references: {topology['scanned_phase_reference_count']}")
+        lines.append("- Layer observations:")
+        for observation in topology["layer_observations"]:
+            path = observation.get("path", "(not specified)")
+            path_exists = observation.get("path_exists")
+            state = "not specified" if path_exists is None else "exists" if path_exists else "missing"
+            lines.append(
+                f"  - `{observation['branch_id']}/{observation['layer_id']}` "
+                f"({observation['kind']}): {path} ({state})"
+            )
+        lines.append("- Phase observations:")
+        for observation in topology["phase_observations"]:
+            reference = observation["reference_id"]
+            state = observation.get("path_exists", "external")
+            lines.append(f"  - `{observation['target_id']}/{reference}`: {state}")
+        lines.append("")
     lines.append("## Schema Errors")
     if report["schema_errors"]:
         for entry in report["schema_errors"]:
@@ -826,13 +1205,26 @@ def render_markdown(report):
     else:
         lines.append("None.")
     lines.append("")
-    lines.append("## Discrepancies")
-    if report["discrepancies"]:
-        for entry in report["discrepancies"]:
-            lines.append(f"- {entry}")
-    else:
-        lines.append("None.")
-    lines.append("")
+    if topology is not None:
+        lines.append("## Discrepancies")
+        if report["discrepancies"]:
+            for entry in report["discrepancies"]:
+                targets = ", ".join(entry["affected_target_ids"])
+                lines.append(
+                    f"- [{entry['finding_state']}] {entry['code']}: {entry['message']} "
+                    f"(targets: {targets})"
+                )
+        else:
+            lines.append("None.")
+        lines.append("")
+        lines.append("## Next Actions")
+        if report["next_actions"]:
+            for action in report["next_actions"]:
+                targets = ", ".join(action["affected_target_ids"])
+                lines.append(f"- `{action['code']}` ({targets}): {action['action']}")
+        else:
+            lines.append("None.")
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -861,6 +1253,9 @@ def main():
             eligible_surfaces = validate_mutation_surfaces(fm)
             validate_phase_maps(fm, targets)
             validate_verification(fm, targets, eligible_surfaces)
+            if not schema_errors:
+                observed_topology, discrepancies = scan_topology(fm, targets)
+                next_actions = build_next_actions(discrepancies)
 
     report = {
         "contract_discovery": discovery,
@@ -875,6 +1270,7 @@ def main():
     elif FORMAT == "markdown":
         print(render_markdown(report))
     else:  # both
+        print(json.dumps(report, indent=2, ensure_ascii=False))
         with open(OUT_JSON, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2, ensure_ascii=False)
             f.write("\n")
