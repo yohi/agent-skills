@@ -1005,7 +1005,6 @@ contract = {
                         "phase": "installation",
                         "target_type": "cli",
                         "required_for_e2e": True,
-                        "required_capabilities": ["future_capability"],
                         "blocked_by": [],
                         "probe": {
                             "kind": "command",
@@ -1158,6 +1157,159 @@ elif variant == "temporary-fixture":
     }]
 elif variant != "valid":
     raise ValueError(f"unknown fixture variant: {variant}")
+
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+}
+
+write_dry_run_contract() {
+  local path="$1"
+
+  python3 - "$path" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+targets = {
+    "cli_main": {
+        "target_type": "cli",
+        "canonical_source": {
+            "kind": "repository_path",
+            "value": "src",
+            "ref_mode": "not_applicable",
+        },
+        "runtime": {
+            "mode": "process",
+            "command": ["node", "--version"],
+            "safety": "read_only",
+        },
+    },
+    "skill_main": {
+        "target_type": "skill",
+        "canonical_source": {
+            "kind": "repository_path",
+            "value": "src",
+            "ref_mode": "not_applicable",
+        },
+        "runtime": {"mode": "agent_discovery"},
+    },
+    "mcp_main": {
+        "target_type": "mcp",
+        "canonical_source": {
+            "kind": "repository_path",
+            "value": "src",
+            "ref_mode": "not_applicable",
+        },
+        "runtime": {
+            "mode": "process",
+            "command": ["agent-setup-mcp-stdio-readonly"],
+            "safety": "read_only",
+        },
+    },
+}
+
+def command_item(item_id, argv, safety):
+    return {
+        "id": item_id,
+        "phase": "discovery",
+        "target_type": "cli",
+        "required_for_e2e": True,
+        "blocked_by": [],
+        "probe": {"kind": "command", "argv": argv, "safety": safety},
+    }
+
+items = {
+    "cli_main": [
+        command_item("cli.node", ["node", "--version"], "read_only"),
+        command_item("cli.git", ["git", "status", "--porcelain"], "read_only"),
+        command_item("cli.install", ["npm", "install"], "mutating"),
+        command_item("cli.unknown", ["unknown-command", "--check"], "read_only"),
+        command_item("cli.mismatch", ["node", "--version"], "mutating"),
+    ],
+    "skill_main": [
+        {
+            "id": "skill.adapter",
+            "phase": "discovery",
+            "target_type": "skill",
+            "required_for_e2e": True,
+            "blocked_by": [],
+            "probe": {
+                "kind": "agent_action",
+                "action": "discovery",
+                "adapter": {
+                    "kind": "command",
+                    "argv": ["node", "--version"],
+                    "stdin": "empty",
+                    "safety": "read_only",
+                },
+            },
+        }
+    ],
+    "mcp_main": [
+        {
+            "id": "mcp.initialize",
+            "phase": "initialize",
+            "target_type": "mcp",
+            "required_for_e2e": True,
+            "blocked_by": [],
+            "probe": {"kind": "mcp_request", "request": "initialize"},
+        },
+        {
+            "id": "mcp.temporary",
+            "phase": "representative_operation",
+            "target_type": "mcp",
+            "required_for_e2e": True,
+            "blocked_by": [],
+            "probe": {
+                "kind": "mcp_request",
+                "request": "representative_tool_call",
+                "tool": "create_fixture",
+                "arguments": {"name": "dry-run"},
+                "safety": "mutating",
+                "mutation_surface_id": "temporary-resource",
+            },
+        },
+    ],
+}
+
+contract = {
+    "setup_contract_schema_version": 1,
+    "setup_intent": "Exercise dry-run safety decisions",
+    "setup_target": targets,
+    "complexity_triggers": [],
+    "configuration_branches": [
+        {"id": "main", "layers": [{"id": "choice", "kind": "choice"}]}
+    ],
+    "installation": {target_id: [] for target_id in targets},
+    "registration": {target_id: [] for target_id in targets},
+    "discovery": {target_id: [] for target_id in targets},
+    "activation": {target_id: [] for target_id in targets},
+    "verification": {
+        "targets": {
+            target_id: {"target_type": targets[target_id]["target_type"], "items": target_items}
+            for target_id, target_items in items.items()
+        }
+    },
+    "handoffs": {},
+    "external_effects": {
+        "mutation_surfaces": [
+            {
+                "id": "temporary-resource",
+                "scope": "external",
+                "kind": "external_resource",
+                "value": "dry-run-fixture",
+                "snapshot": "required",
+                "cleanup_required": True,
+            }
+        ]
+    },
+}
 
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(
@@ -2161,6 +2313,7 @@ check_target_probe_rejects_internal_evidence_dir_without_mutation() {
 check_verification_exposes_enhanced_workflow() {
   local repo="$TEMP_DIR/enhanced-verification-plan-repo"
   mkdir -p "$repo/.agent-setup"
+  write_audit_contract "$repo/SETUP-CONTRACT.md" readonly-node
   cat >"$repo/.agent-setup/analyze.json" <<'JSON'
 {
   "complexity_triggers": [
@@ -2182,6 +2335,1181 @@ assert enhanced["probe_executor"] == "run-target-probes.sh"
 assert enhanced["classify_only_command"] == "run-target-probes.sh --classify-only"
 assert enhanced["temporary_fixture_policy"] == "safety_blocked"
 '
+}
+
+check_dry_run_preserves_target_and_reports_snapshots() {
+  local repo="$TEMP_DIR/dry-run-pristine-repo"
+  local report="$TEMP_DIR/dry-run-pristine-report.md"
+  local result="$TEMP_DIR/dry-run-pristine-result.json"
+  mkdir -p "$repo/src"
+  printf '%s\n' 'source' >"$repo/src/README.md"
+
+  git -C "$repo" init -q
+  git -C "$repo" config user.email test@example.invalid
+  git -C "$repo" config user.name "Agent Setup Test"
+  git -C "$repo" add src/README.md
+  git -C "$repo" commit -qm initial
+
+  bash "$SCRIPT_DIR/verify-setup.sh" \
+    --dry-run \
+    --report "$report" \
+    "$repo" >"$result"
+
+  [[ ! -e "$repo/.agent-setup" ]] || return 1
+  [[ -z "$(git -C "$repo" status --porcelain)" ]] || return 1
+  [[ -f "$report" ]] || return 1
+
+  python3 - "$result" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+dry_run = data["dry_run"]
+assert dry_run["decision"] == "not_executed"
+assert dry_run["before_snapshot"]["agent_setup_exists"] is False
+assert dry_run["after_snapshot"]["agent_setup_exists"] is False
+PY
+}
+
+check_dry_run_classifies_policy_and_blocks_processes() {
+  local repo="$TEMP_DIR/dry-run-safety-repo"
+  local fake_bin="$TEMP_DIR/dry-run-safety-bin"
+  local marker="$TEMP_DIR/dry-run-process-started"
+  local result="$TEMP_DIR/dry-run-safety-result.json"
+  mkdir -p "$repo/src" "$fake_bin"
+  write_dry_run_contract "$repo/contract.md"
+
+  for executable in node npm unknown-command agent-setup-mcp-stdio-readonly; do
+    cat >"$fake_bin/$executable" <<SH
+#!/bin/sh
+touch "$marker"
+exit 0
+SH
+    chmod +x "$fake_bin/$executable"
+  done
+
+  PATH="$fake_bin:$PATH" bash "$SCRIPT_DIR/verify-setup.sh" \
+    --dry-run \
+    --contract contract.md \
+    --report "$TEMP_DIR/dry-run-safety-report.md" \
+    "$repo" >"$result"
+
+  [[ ! -e "$marker" ]] || return 1
+  [[ ! -e "$repo/.agent-setup" ]] || return 1
+
+  python3 - "$result" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+probes = {
+    (probe["target_id"], probe["item_id"]): probe
+    for probe in data["dry_run"]["probes"]
+}
+
+for item_id in ("cli.node", "cli.git"):
+    probe = probes[("cli_main", item_id)]
+    assert probe["effective_safety"] == "read_only"
+    assert probe["declaration_matches"] is True
+    assert probe["decision"] == "execute"
+
+for item_id, effective_safety, matches in (
+    ("cli.install", "mutating", True),
+    ("cli.unknown", "unknown", False),
+    ("cli.mismatch", "read_only", False),
+):
+    probe = probes[("cli_main", item_id)]
+    assert probe["effective_safety"] == effective_safety
+    assert probe["declaration_matches"] is matches
+    assert probe["decision"] == "not_executed"
+
+skill = probes[("skill_main", "skill.adapter")]
+assert skill["effective_safety"] == "read_only"
+assert skill["declaration_matches"] is True
+assert skill["decision"] == "not_executed"
+
+temporary = probes[("mcp_main", "mcp.temporary")]
+assert temporary["decision"] == "not_executed"
+
+runtimes = {runtime["target_id"]: runtime for runtime in data["dry_run"]["runtimes"]}
+assert runtimes["mcp_main"]["effective_safety"] == "read_only"
+assert runtimes["mcp_main"]["declaration_matches"] is True
+assert runtimes["mcp_main"]["decision"] == "not_executed"
+PY
+}
+
+check_dry_run_blocks_confirmed_audit_targets() {
+  local repo="$TEMP_DIR/dry-run-confirmed-audit-repo"
+  local report="$TEMP_DIR/dry-run-confirmed-audit-report.md"
+  local result="$TEMP_DIR/dry-run-confirmed-audit-result.json"
+  local status
+  mkdir -p "$repo"
+  write_topology_fixture "$repo"
+  set_report_contract_probe_commands "$repo/contract.md"
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" \
+    --dry-run \
+    --contract contract.md \
+    --report "$report" \
+    "$repo" >"$result"; then
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" == "4" ]] || return 1
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+report = data["verification_report"]
+assert report["overall_status"] == "not_verified"
+assert report["targets"]["cli_main"]["audit_blocked"] is True
+assert report["targets"]["other_valid"]["audit_blocked"] is False
+
+probes = report["dry_run"]["probes"]
+affected = [probe for probe in probes if probe["target_id"] == "cli_main"]
+unaffected = [probe for probe in probes if probe["target_id"] == "other_valid"]
+assert affected
+assert all(probe["decision"] == "not_executed" for probe in affected)
+assert all(probe["error_category"] == "audit_blocked" for probe in affected)
+assert unaffected
+assert any(probe["decision"] == "execute" for probe in unaffected)
+PY
+}
+
+check_dry_run_skill_handoff_is_reference_only() {
+  local repo="$TEMP_DIR/dry-run-skill-handoff-repo"
+  local report="$TEMP_DIR/dry-run-skill-handoff-report.md"
+  local result="$TEMP_DIR/dry-run-skill-handoff-result.json"
+  mkdir -p "$repo/src"
+  write_dry_run_contract "$repo/contract.md"
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+contract = yaml.safe_load(text.split("\n---", 1)[0][4:])
+contract["verification"]["targets"]["skill_main"]["items"][0]["handoff_id"] = "skill-review"
+contract["handoffs"] = {
+    "skill-review": {
+        "actor": "user",
+        "action": "Review the Skill discovery result.",
+        "prerequisites": [],
+        "expected_outcome": "The Skill is discoverable.",
+        "required_evidence": [{"type": "command_output", "summary": "discovery"}],
+    }
+}
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+
+  bash "$SCRIPT_DIR/verify-setup.sh" \
+    --dry-run \
+    --contract contract.md \
+    --report "$report" \
+    "$repo" >"$result"
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+report = data["verification_report"]
+assert report["dry_run"]["decision"] == "not_executed"
+assert report["handoffs"] == []
+references = report["handoff_references"]
+assert len(references) == 1
+assert references[0]["handoff_id"] == "skill-review"
+assert references[0]["definition"]["actor"] == "user"
+skill_probe = next(
+    probe
+    for probe in data["dry_run"]["probes"]
+    if probe["target_id"] == "skill_main"
+)
+assert skill_probe["decision"] == "not_executed"
+PY
+}
+
+check_normal_skill_safety_rejection_records_only_defined_handoff() {
+  local repo="$TEMP_DIR/normal-skill-handoff-repo"
+  local report="$TEMP_DIR/normal-skill-handoff-report.md"
+  local result="$TEMP_DIR/normal-skill-handoff-result.json"
+  local status
+  mkdir -p "$repo/src"
+  write_dry_run_contract "$repo/contract.md"
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+contract = yaml.safe_load(text.split("\n---", 1)[0][4:])
+contract["verification"]["targets"]["skill_main"]["items"][0]["handoff_id"] = "skill-review"
+contract["handoffs"] = {
+    "skill-review": {
+        "actor": "user",
+        "action": "Review the Skill discovery result.",
+        "prerequisites": [],
+        "expected_outcome": "The Skill is discoverable.",
+        "required_evidence": [{"type": "command_output", "summary": "discovery"}],
+    }
+}
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    --report "$report" \
+    "$repo" >"$result"; then
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" == "4" ]] || return 1
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+assert len(report["handoffs"]) == 1
+handoff = report["handoffs"][0]
+assert handoff["handoff_id"] == "skill-review"
+assert handoff["verification_item_id"] == "skill.adapter"
+assert handoff["actor"] == "user"
+assert handoff["status"] == "pending"
+assert handoff["evaluation_result"] == "needs_review"
+item = report["targets"]["skill_main"]["items"][0]
+assert item["status"] == "not_verified"
+assert item["error_category"] == "safety_blocked"
+PY
+}
+
+check_dry_run_rejects_target_internal_report() {
+  local repo="$TEMP_DIR/dry-run-internal-report-repo"
+  local stderr_file="$TEMP_DIR/dry-run-internal-report.stderr"
+  mkdir -p "$repo/src"
+  write_dry_run_contract "$repo/contract.md"
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" \
+    --dry-run \
+    --contract contract.md \
+    --report "$repo/report.md" \
+    "$repo" > /dev/null 2>"$stderr_file"; then
+    return 1
+  else
+    local status=$?
+  fi
+
+  [[ "$status" == 2 ]] || return 1
+  [[ ! -e "$repo/report.md" ]] || return 1
+  [[ ! -e "$repo/.agent-setup" ]] || return 1
+}
+
+check_verification_detects_readme_contract_marker() {
+  local repo="$TEMP_DIR/readme-contract-marker-repo"
+  local result="$TEMP_DIR/readme-contract-marker-result.json"
+  mkdir -p "$repo"
+  write_audit_contract "$repo/contract.md" readonly-node
+  printf '%s\n' '<!-- agent-setup-contract: contract.md -->' >"$repo/README.md"
+
+  bash "$SCRIPT_DIR/verify-setup.sh" "$repo" >"$result"
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+
+plan = json.load(open(sys.argv[1], encoding="utf-8"))
+assert "enhanced_workflow" in plan
+assert plan["contract"] == "contract.md"
+assert plan["contract_audit"]["contract_discovery"] == {
+    "status": "found",
+    "path": "contract.md",
+    "source": "repository_declared",
+}
+PY
+}
+
+check_verification_rejects_ambiguous_contract_markers() {
+  local repo="$TEMP_DIR/ambiguous-contract-markers-repo"
+  local stderr_file="$TEMP_DIR/ambiguous-contract-markers.stderr"
+  local status
+  mkdir -p "$repo"
+  write_audit_contract "$repo/contract-a.md"
+  write_audit_contract "$repo/contract-b.md"
+  printf '%s\n' '<!-- agent-setup-contract: contract-a.md -->' >"$repo/AGENTS.md"
+  printf '%s\n' '<!-- agent-setup-contract: contract-b.md -->' >"$repo/README.md"
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" "$repo" >/dev/null 2>"$stderr_file"; then
+    return 1
+  else
+    status=$?
+  fi
+
+  [[ "$status" == 2 ]] || return 1
+  grep -q 'ambiguous' "$stderr_file" || return 1
+  grep -q 'contract_discovery' "$stderr_file" || return 1
+}
+
+check_dry_run_rejects_symlinked_temp_root_inside_target() {
+  local repo="$TEMP_DIR/symlinked-tmpdir-repo"
+  local target_tmp="$repo/target-tmp"
+  local linked_tmp="$TEMP_DIR/symlinked-tmpdir"
+  local stderr_file="$TEMP_DIR/symlinked-tmpdir.stderr"
+  local status
+  mkdir -p "$target_tmp"
+  ln -s "$target_tmp" "$linked_tmp"
+
+  if TMPDIR="$linked_tmp" bash "$SCRIPT_DIR/verify-setup.sh" --dry-run "$repo" \
+    >/dev/null 2>"$stderr_file"; then
+    return 1
+  else
+    status=$?
+  fi
+
+  [[ "$status" == 1 ]] || return 1
+  grep -q 'temporary storage is inside the target repository' "$stderr_file" || return 1
+  [[ -z "$(compgen -G "$target_tmp/agent-driven-setup.*" || true)" ]] || return 1
+}
+
+set_report_contract_probe_commands() {
+  local contract="$1"
+
+  python3 - "$contract" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+contract = yaml.safe_load(text.split("\n---", 1)[0][4:])
+for verification in contract["verification"]["targets"].values():
+    for item in verification["items"]:
+        probe = item.get("probe", {})
+        if probe.get("kind") == "command":
+            probe["argv"] = ["node", "--version"]
+            probe["safety"] = "read_only"
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+}
+
+check_verification_report_all_required_items_verified() {
+  local repo="$TEMP_DIR/report-all-verified-repo"
+  local report="$TEMP_DIR/report-all-verified.md"
+  local result="$TEMP_DIR/report-all-verified.json"
+  mkdir -p "$repo"
+  write_audit_contract "$repo/contract.md" readonly-node
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+contract["verification"]["targets"]["cli_main"]["items"][0][
+    "required_capabilities"
+] = ["representative_activation_probe"]
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+  printf '%s\n' 'test:' >"$repo/Makefile"
+
+  bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    --report "$report" \
+    "$repo" >"$result"
+
+  python3 - "$result" "$report" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+stdout = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+report = stdout["verification_report"]
+markdown = Path(sys.argv[2]).read_text(encoding="utf-8")
+
+assert {"commands", "notes", "makefile_targets", "verification_report"} <= stdout.keys()
+assert report["generated_at"]
+assert report["overall_status"] == "verified"
+assert report["targets"]["cli_main"]["e2e_status"] == "verified"
+items = report["targets"]["cli_main"]["items"]
+assert items and all(item["status"] == "verified" for item in items)
+assert report["capability_assessment"]
+assert report["handoffs"] == []
+assert report["dry_run"]["decision"] == "not_executed"
+assert markdown.startswith("---\n")
+assert "# Verification Report" in markdown
+assert "overall_status: verified" in markdown
+PY
+}
+
+check_capability_assessment_unknown_capability_blocks_item() {
+  local repo="$TEMP_DIR/capability-unknown-repo"
+  local result="$TEMP_DIR/capability-unknown-result.json"
+  local status
+  mkdir -p "$repo"
+  write_audit_contract "$repo/contract.md" readonly-node
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+contract["verification"]["targets"]["cli_main"]["items"][0][
+    "required_capabilities"
+] = ["future_capability"]
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    "$repo" >"$result"; then
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" == "4" ]] || return 1
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+capability = report["capability_assessment"]["future_capability"]
+assert capability["status"] == "unknown"
+assert capability["reason"]
+assert capability["evidence"] == []
+item = report["targets"]["cli_main"]["items"][0]
+assert item["status"] == "not_verified"
+assert item["error_category"] == "capability_unknown"
+assert report["handoffs"] == []
+PY
+}
+
+check_capability_assessment_unavailable_mcp_runtime_blocks_probe() {
+  local repo="$TEMP_DIR/capability-mcp-unavailable-repo"
+  local fake_bin="$TEMP_DIR/capability-mcp-unavailable-bin"
+  local marker="$TEMP_DIR/capability-mcp-unavailable-started"
+  local result="$TEMP_DIR/capability-mcp-unavailable-result.json"
+  local runtime_path
+  local path_without_runtime
+  local status
+  mkdir -p "$repo" "$fake_bin"
+  write_audit_contract "$repo/contract.md" mcp-initialize
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+contract["verification"]["targets"]["cli_main"]["items"][0][
+    "required_capabilities"
+] = ["mcp_runtime_probe"]
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+  cat >"$fake_bin/agent-setup-mcp-stdio-readonly" <<SH
+#!/bin/sh
+touch "$marker"
+while IFS= read -r request; do
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+done
+SH
+  chmod +x "$fake_bin/agent-setup-mcp-stdio-readonly"
+
+  runtime_path="$(command -v agent-setup-mcp-stdio-readonly || true)"
+  path_without_runtime="$(python3 - "$PATH" "$runtime_path" <<'PY'
+import os
+from pathlib import Path
+import sys
+
+path_value, runtime_path = sys.argv[1:]
+runtime_parent = Path(runtime_path).resolve().parent if runtime_path else None
+entries = []
+for entry in path_value.split(os.pathsep):
+    resolved = Path(entry or ".").resolve()
+    if runtime_parent is None or resolved != runtime_parent:
+        entries.append(entry)
+print(os.pathsep.join(entries))
+PY
+)"
+
+  if AGENT_SETUP_MCP_FIXTURE="$fake_bin/agent-setup-mcp-stdio-readonly" \
+    PATH="$TEMP_DIR/no-mcp-runtime:$path_without_runtime" \
+    bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    "$repo" >"$result"; then
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" == "4" ]] || return 1
+  [[ ! -e "$marker" ]] || return 1
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+capability = report["capability_assessment"]["mcp_runtime_probe"]
+assert capability["status"] == "unavailable"
+assert capability["reason"]
+assert capability["evidence"]
+item = report["targets"]["cli_main"]["items"][0]
+assert item["status"] == "not_verified"
+assert item["error_category"] == "capability_unavailable"
+assert "handoff_id" not in item
+assert report["handoffs"] == []
+PY
+}
+
+check_capability_assessment_available_mcp_runtime_separates_failure() {
+  local repo="$TEMP_DIR/capability-mcp-failure-repo"
+  local fake_bin="$TEMP_DIR/capability-mcp-failure-bin"
+  local result="$TEMP_DIR/capability-mcp-failure-result.json"
+  local status
+  mkdir -p "$repo" "$fake_bin"
+  write_audit_contract "$repo/contract.md" mcp-initialize
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+contract["verification"]["targets"]["cli_main"]["items"][0][
+    "required_capabilities"
+] = ["mcp_runtime_probe"]
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+  cat >"$fake_bin/agent-setup-mcp-stdio-readonly" <<'SH'
+#!/bin/sh
+while IFS= read -r request; do
+  printf '%s\n' 'not-json-rpc'
+done
+SH
+  chmod +x "$fake_bin/agent-setup-mcp-stdio-readonly"
+
+  if PATH="$fake_bin:$PATH" \
+    AGENT_SETUP_MCP_FIXTURE="$fake_bin/agent-setup-mcp-stdio-readonly" \
+    bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    "$repo" >"$result"; then
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" == "4" ]] || return 1
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+capability = report["capability_assessment"]["mcp_runtime_probe"]
+assert capability["status"] == "available"
+assert capability["reason"]
+assert capability["evidence"]
+item = report["targets"]["cli_main"]["items"][0]
+assert item["status"] == "not_verified"
+assert item["error_category"] == "runtime_failure"
+PY
+}
+
+check_capability_assessment_reuses_policy_classifier_for_mcp_runtime() {
+  local repo="$TEMP_DIR/capability-mcp-classifier-repo"
+  local fake_bin="$TEMP_DIR/capability-mcp-classifier-bin"
+  local result="$TEMP_DIR/capability-mcp-classifier-result.json"
+  local status
+  mkdir -p "$repo" "$fake_bin"
+  write_audit_contract "$repo/contract.md" mcp-initialize
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+target = contract["setup_target"]["cli_main"]
+target["runtime"]["command"] = ["node", "--version"]
+contract["verification"]["targets"]["cli_main"]["items"][0][
+    "required_capabilities"
+] = ["mcp_runtime_probe"]
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+  cat >"$fake_bin/node" <<'SH'
+#!/bin/sh
+exit 0
+SH
+  chmod +x "$fake_bin/node"
+
+  if PATH="$fake_bin:$PATH" bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    "$repo" >"$result"; then
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" == "4" ]] || return 1
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+capability = report["capability_assessment"]["mcp_runtime_probe"]
+assert capability["status"] == "available"
+assert "classification: read_only (declaration_matches=True)" in capability["evidence"]
+item = report["targets"]["cli_main"]["items"][0]
+assert item["status"] == "not_verified"
+assert item["error_category"] == "safety_blocked"
+PY
+}
+
+check_verifier_does_not_duplicate_mcp_runtime_registry() {
+  ! grep -q 'agent-setup-mcp-stdio-readonly' "$SCRIPT_DIR/verify-setup.sh"
+}
+
+check_capability_assessment_skill_handoff_boundary_keeps_capability_available() {
+  local repo="$TEMP_DIR/capability-skill-handoff-repo"
+  local result="$TEMP_DIR/capability-skill-handoff-result.json"
+  local status
+  mkdir -p "$repo/src"
+  write_dry_run_contract "$repo/contract.md"
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+skill_items = contract["verification"]["targets"]["skill_main"]["items"]
+skill_items[0]["required_capabilities"] = ["agent_discovery_probe"]
+skill_items[0]["handoff_id"] = "skill-discovery-review"
+skill_items.append(
+    {
+        "id": "skill.activation",
+        "phase": "activation",
+        "target_type": "skill",
+        "required_for_e2e": True,
+        "blocked_by": [],
+        "required_capabilities": ["representative_activation_probe"],
+        "handoff_id": "skill-activation-review",
+        "probe": {
+            "kind": "agent_action",
+            "action": "activation",
+            "adapter": {
+                "kind": "command",
+                "argv": ["node", "--version"],
+                "stdin": "empty",
+                "safety": "read_only",
+            },
+        },
+    }
+)
+contract["handoffs"] = {
+    "skill-discovery-review": {
+        "actor": "user",
+        "action": "Review Skill discovery.",
+        "prerequisites": [],
+        "expected_outcome": "The Skill is discoverable.",
+        "required_evidence": [{"type": "command_output", "summary": "discovery"}],
+    },
+    "skill-activation-review": {
+        "actor": "user",
+        "action": "Review Skill activation.",
+        "prerequisites": [],
+        "expected_outcome": "The Skill is activated.",
+        "required_evidence": [{"type": "command_output", "summary": "activation"}],
+    },
+}
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    "$repo" >"$result"; then
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" == "4" ]] || return 1
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+assessment = report["capability_assessment"]
+assert assessment["agent_discovery_probe"]["status"] == "available"
+assert assessment["representative_activation_probe"]["status"] == "available"
+items = {
+    item["id"]: item for item in report["targets"]["skill_main"]["items"]
+}
+for item_id, handoff_id in (
+    ("skill.adapter", "skill-discovery-review"),
+    ("skill.activation", "skill-activation-review"),
+):
+    assert items[item_id]["status"] == "not_verified"
+    assert items[item_id]["error_category"] == "safety_blocked"
+    assert items[item_id]["handoff_id"] == handoff_id
+handoffs = {handoff["handoff_id"] for handoff in report["handoffs"]}
+assert handoffs == {"skill-discovery-review", "skill-activation-review"}
+PY
+}
+
+check_verification_report_records_runtime_failure() {
+  local repo="$TEMP_DIR/report-runtime-failure-repo"
+  local fake_bin="$TEMP_DIR/report-runtime-failure-bin"
+  local report="$TEMP_DIR/report-runtime-failure.md"
+  local result="$TEMP_DIR/report-runtime-failure.json"
+  local status
+  mkdir -p "$repo" "$fake_bin"
+  write_audit_contract "$repo/contract.md" readonly-node
+  cat >"$fake_bin/node" <<'SH'
+#!/bin/sh
+exit 17
+SH
+  chmod +x "$fake_bin/node"
+
+  if PATH="$fake_bin:$PATH" bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    --report "$report" \
+    "$repo" >"$result"; then
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" == "4" ]] || return 1
+
+  python3 - "$result" "$report" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+stdout = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+report = stdout["verification_report"]
+item = report["targets"]["cli_main"]["items"][0]
+assert item["status"] == "not_verified"
+assert item["error_category"] == "runtime_failure"
+assert report["targets"]["cli_main"]["e2e_status"] == "not_verified"
+assert report["overall_status"] == "not_verified"
+assert "overall_status: not_verified" in Path(sys.argv[2]).read_text(encoding="utf-8")
+PY
+}
+
+check_verification_report_scopes_confirmed_audit_findings() {
+  local repo="$TEMP_DIR/report-confirmed-isolation-repo"
+  local report="$TEMP_DIR/report-confirmed-isolation.md"
+  local result="$TEMP_DIR/report-confirmed-isolation.json"
+  local status
+  mkdir -p "$repo"
+  write_topology_fixture "$repo"
+  set_report_contract_probe_commands "$repo/contract.md"
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    --report "$report" \
+    "$repo" >"$result"; then
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" == "4" ]] || return 1
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+cli = report["targets"]["cli_main"]
+other = report["targets"]["other_valid"]
+assert cli["e2e_status"] == "not_verified"
+assert all(
+    item["status"] == "not_verified"
+    and item["error_category"] == "audit_blocked"
+    for item in cli["items"]
+)
+assert other["e2e_status"] == "verified"
+assert all(item["status"] == "verified" for item in other["items"])
+findings = report["audit"]["discrepancies"]
+assert any(
+    finding["finding_state"] == "confirmed"
+    and finding["affected_target_ids"] == ["cli_main"]
+    for finding in findings
+)
+assert report["overall_status"] == "not_verified"
+PY
+}
+
+check_verification_report_keeps_unresolved_findings_target_scoped() {
+  local repo="$TEMP_DIR/report-unresolved-isolation-repo"
+  local report="$TEMP_DIR/report-unresolved-isolation.md"
+  local result="$TEMP_DIR/report-unresolved-isolation.json"
+  local status
+  mkdir -p "$repo"
+  write_topology_fixture "$repo"
+  printf '%s\n' 'server:' '  port: 3000' >"$repo/src/config/generated.yaml"
+  set_report_contract_probe_commands "$repo/contract.md"
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    --report "$report" \
+    "$repo" >"$result"; then
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" == "4" ]] || return 1
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+cli = report["targets"]["cli_main"]
+other = report["targets"]["other_valid"]
+assert all(item["status"] == "verified" for item in cli["items"])
+assert cli["e2e_status"] == "not_verified"
+assert other["e2e_status"] == "verified"
+assert all(item["status"] == "verified" for item in other["items"])
+assert any(
+    finding["finding_state"] == "unresolved"
+    and finding["affected_target_ids"] == ["cli_main"]
+    for finding in report["audit"]["discrepancies"]
+)
+assert report["overall_status"] == "verified"
+PY
+}
+
+check_verification_report_blocks_schema_errors() {
+  local repo="$TEMP_DIR/report-schema-error-repo"
+  local report="$TEMP_DIR/report-schema-error.md"
+  local result="$TEMP_DIR/report-schema-error.json"
+  local dry_report="$TEMP_DIR/report-schema-error-dry.md"
+  local dry_result="$TEMP_DIR/report-schema-error-dry.json"
+  local status
+  local dry_status
+  mkdir -p "$repo"
+  write_audit_contract "$repo/contract.md" invalid-safety
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    --report "$report" \
+    "$repo" >"$result"; then
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" == "4" ]] || return 1
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+assert report["audit"]["schema_errors"]
+item = report["targets"]["cli_main"]["items"][0]
+assert item["status"] == "not_verified"
+assert item["error_category"] == "audit_blocked"
+assert report["targets"]["cli_main"]["e2e_status"] == "not_verified"
+assert report["overall_status"] == "not_verified"
+PY
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" \
+    --dry-run \
+    --contract contract.md \
+    --report "$dry_report" \
+    "$repo" >"$dry_result"; then
+    return 1
+  else
+    dry_status=$?
+  fi
+  [[ "$dry_status" == "4" ]] || return 1
+  python3 - "$dry_result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+assert report["audit"]["schema_errors"]
+assert report["overall_status"] == "not_verified"
+PY
+}
+
+check_verification_rejects_malformed_structure_with_audit_status() {
+  local shape mode repo report result status
+
+  for shape in verification targets; do
+    for mode in normal dry-run; do
+      repo="$TEMP_DIR/malformed-${shape}-${mode}-repo"
+      report="$TEMP_DIR/malformed-${shape}-${mode}-report.md"
+      result="$TEMP_DIR/malformed-${shape}-${mode}-result.json"
+      mkdir -p "$repo"
+      write_audit_contract "$repo/contract.md"
+
+      python3 - "$repo/contract.md" "$shape" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+shape = sys.argv[2]
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+if shape == "verification":
+    contract["verification"] = []
+else:
+    contract["verification"]["targets"] = []
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+
+      local -a args=(--contract contract.md --report "$report" "$repo")
+      if [[ "$mode" == "dry-run" ]]; then
+        args=(--dry-run "${args[@]}")
+      fi
+      if bash "$SCRIPT_DIR/verify-setup.sh" "${args[@]}" >"$result"; then
+        return 1
+      else
+        status=$?
+      fi
+      [[ "$status" == "4" ]] || return 1
+
+      python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+assert report["audit"]["schema_errors"]
+assert report["overall_status"] == "not_verified"
+PY
+    done
+  done
+}
+
+check_verification_report_marks_no_required_items_not_applicable() {
+  local repo="$TEMP_DIR/report-not-applicable-repo"
+  local report="$TEMP_DIR/report-not-applicable.md"
+  local result="$TEMP_DIR/report-not-applicable.json"
+  mkdir -p "$repo"
+  write_audit_contract "$repo/contract.md" readonly-node
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+contract = yaml.safe_load(text.split("\n---", 1)[0][4:])
+for verification in contract["verification"]["targets"].values():
+    for item in verification["items"]:
+        item["required_for_e2e"] = False
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+
+  bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    --report "$report" \
+    "$repo" >"$result"
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+assert report["overall_status"] == "not_applicable"
+assert report["targets"]["cli_main"]["e2e_status"] == "not_applicable"
+PY
+}
+
+check_cli_grammar_rejects_missing_and_extra_arguments() {
+  local repo="$TEMP_DIR/cli-grammar-repo"
+  mkdir -p "$repo"
+
+  for args in \
+    "--dry-run" \
+    "--contract" \
+    "--report" \
+    "--unknown-option $repo" \
+    "--dry-run $repo extra" \
+    "$repo --dry-run"; do
+    read -r -a argv <<<"$args"
+    if bash "$SCRIPT_DIR/verify-setup.sh" "${argv[@]}" >/dev/null 2>/dev/null; then
+      return 1
+    else
+      local status=$?
+    fi
+    [[ "$status" == 2 ]] || return 1
+  done
+}
+
+check_legacy_path_does_not_require_pyyaml() {
+  local simple_repo="$TEMP_DIR/simple-without-pyyaml-repo"
+  local enhanced_repo="$TEMP_DIR/enhanced-without-pyyaml-repo"
+  local fake_bin="$TEMP_DIR/missing-pyyaml-bin"
+  local pip_called="$TEMP_DIR/missing-pyyaml-pip-called"
+  local real_python3
+  local simple_result="$TEMP_DIR/simple-without-pyyaml-result.json"
+  local simple_stderr="$TEMP_DIR/simple-without-pyyaml.stderr"
+  local enhanced_stderr="$TEMP_DIR/enhanced-without-pyyaml.stderr"
+  mkdir -p "$simple_repo" "$enhanced_repo/src" "$fake_bin"
+  real_python3="$(command -v python3)"
+
+  cat >"$simple_repo/package.json" <<'JSON'
+{
+  "scripts": {
+    "test": "node --test"
+  }
+}
+JSON
+  write_dry_run_contract "$enhanced_repo/contract.md"
+
+  cat >"$fake_bin/python3" <<'PYTHON'
+#!/bin/sh
+if [ "${1:-}" = "-c" ]; then
+  case "${2:-}" in
+    *"import yaml"*) exit 1 ;;
+  esac
+fi
+if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
+  touch "${MISSING_PYYAML_PIP_CALLED:?}"
+  exit 1
+fi
+exec "${REAL_PYTHON3:?}" "$@"
+PYTHON
+  chmod +x "$fake_bin/python3"
+
+  REAL_PYTHON3="$real_python3" MISSING_PYYAML_PIP_CALLED="$pip_called" \
+    PATH="$fake_bin:$PATH" bash "$SCRIPT_DIR/verify-setup.sh" "$simple_repo" \
+    >"$simple_result" 2>"$simple_stderr"
+  python3 - "$simple_result" "$simple_stderr" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert any(entry["command"] == "npm test" for entry in plan["commands"])
+stderr = Path(sys.argv[2]).read_text(encoding="utf-8")
+assert "dependency_unavailable" not in stderr
+assert "PyYAML" not in stderr
+PY
+
+  if REAL_PYTHON3="$real_python3" MISSING_PYYAML_PIP_CALLED="$pip_called" \
+    PATH="$fake_bin:$PATH" bash "$SCRIPT_DIR/verify-setup.sh" \
+    --dry-run \
+    --contract contract.md \
+    --report "$TEMP_DIR/enhanced-without-pyyaml-report.md" \
+    "$enhanced_repo" >/dev/null 2>"$enhanced_stderr"; then
+    return 1
+  else
+    local status=$?
+  fi
+  [[ "$status" == 3 ]] || return 1
+  grep -q 'dependency_unavailable' "$enhanced_stderr" || return 1
+  [[ ! -e "$pip_called" ]] || return 1
+  [[ ! -e "$enhanced_repo/.agent-setup" ]] || return 1
+}
+
+check_legacy_path_honors_report() {
+  local mode repo report result
+
+  for mode in normal dry-run; do
+    repo="$TEMP_DIR/legacy-report-${mode}-repo"
+    report="$TEMP_DIR/legacy-report-${mode}.md"
+    result="$TEMP_DIR/legacy-report-${mode}.json"
+    mkdir -p "$repo"
+    cat >"$repo/package.json" <<'JSON'
+{
+  "scripts": {
+    "test": "node --test"
+  }
+}
+JSON
+
+    if [[ "$mode" == "dry-run" ]]; then
+      bash "$SCRIPT_DIR/verify-setup.sh" \
+        --dry-run \
+        --report "$report" \
+        "$repo" >"$result"
+    else
+      bash "$SCRIPT_DIR/verify-setup.sh" \
+        --report "$report" \
+        "$repo" >"$result"
+    fi
+
+    [[ -f "$report" ]] || return 1
+    python3 - "$report" <<'PY'
+import sys
+from pathlib import Path
+
+markdown = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert markdown.startswith("# Verification Report\n")
+assert "overall_status: not_applicable" in markdown
+assert '"commands"' in markdown
+PY
+  done
 }
 
 check_documentation_enhanced_probe_boundary() {
@@ -2318,6 +3646,31 @@ run_test "target probe rejects malformed MCP responses" check_target_probe_rejec
 run_test "target probe blocks temporary fixtures before process start" check_target_probe_blocks_temporary_fixture
 run_test "target probe rejects internal evidence dirs without mutation" check_target_probe_rejects_internal_evidence_dir_without_mutation
 run_test "verification exposes the enhanced probe workflow" check_verification_exposes_enhanced_workflow
+run_test "dry-run preserves the target and reports snapshots" check_dry_run_preserves_target_and_reports_snapshots
+run_test "dry-run classifies safety and blocks process starts" check_dry_run_classifies_policy_and_blocks_processes
+run_test "dry-run blocks confirmed audit targets" check_dry_run_blocks_confirmed_audit_targets
+run_test "dry-run Skill handoffs are reference-only" check_dry_run_skill_handoff_is_reference_only
+run_test "normal Skill safety rejection records defined handoff" check_normal_skill_safety_rejection_records_only_defined_handoff
+run_test "dry-run rejects target-internal reports" check_dry_run_rejects_target_internal_report
+run_test "verification detects a Contract marker in README" check_verification_detects_readme_contract_marker
+run_test "verification rejects ambiguous Contract markers" check_verification_rejects_ambiguous_contract_markers
+run_test "dry-run rejects a symlinked temp root inside target" check_dry_run_rejects_symlinked_temp_root_inside_target
+run_test "verification rejects malformed CLI grammar" check_cli_grammar_rejects_missing_and_extra_arguments
+run_test "legacy path does not require PyYAML" check_legacy_path_does_not_require_pyyaml
+run_test "legacy path honors --report" check_legacy_path_honors_report
+run_test "verification report marks all required items verified" check_verification_report_all_required_items_verified
+run_test "capability assessment blocks undefined capabilities separately" check_capability_assessment_unknown_capability_blocks_item
+run_test "capability assessment blocks unavailable MCP runtimes" check_capability_assessment_unavailable_mcp_runtime_blocks_probe
+run_test "capability assessment separates available MCP runtime failures" check_capability_assessment_available_mcp_runtime_separates_failure
+run_test "capability assessment reuses the Policy v1 classifier" check_capability_assessment_reuses_policy_classifier_for_mcp_runtime
+run_test "verification does not duplicate the MCP runtime registry" check_verifier_does_not_duplicate_mcp_runtime_registry
+run_test "capability assessment preserves the Skill P1 handoff boundary" check_capability_assessment_skill_handoff_boundary_keeps_capability_available
+run_test "verification report records runtime failures" check_verification_report_records_runtime_failure
+run_test "verification report scopes confirmed audit findings" check_verification_report_scopes_confirmed_audit_findings
+run_test "verification report scopes unresolved audit findings" check_verification_report_keeps_unresolved_findings_target_scoped
+run_test "verification report blocks schema errors" check_verification_report_blocks_schema_errors
+run_test "verification rejects malformed structures with audit status" check_verification_rejects_malformed_structure_with_audit_status
+run_test "verification report derives not-applicable status" check_verification_report_marks_no_required_items_not_applicable
 run_test "documentation defines the enhanced probe boundary" check_documentation_enhanced_probe_boundary
 run_test "documentation publishes capability and verification references" check_documentation_capability_references
 
