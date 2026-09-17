@@ -668,6 +668,240 @@ PYTHON
   bash "$SCRIPT_DIR/verify-setup.sh" "$repo" >/dev/null 2>"$TEMP_DIR/retry-analysis.stderr"
 }
 
+check_setup_contract_required_runtime_fields() {
+  local contract_dir="$TEMP_DIR/contract-red"
+  mkdir -p "$contract_dir"
+
+  python3 - "$contract_dir" <<'PY'
+import copy
+import sys
+from pathlib import Path
+
+import yaml
+
+root = Path(sys.argv[1])
+contract = {
+    "setup_contract_schema_version": 1,
+    "setup_intent": "test",
+    "setup_target": {
+        "mcp_main": {
+            "target_type": "mcp",
+            "canonical_source": {
+                "kind": "repository_path",
+                "value": "server",
+                "ref_mode": "not_applicable",
+            },
+            "runtime": {"mode": "in_process"},
+        }
+    },
+    "complexity_triggers": [],
+    "configuration_branches": [{"id": "main", "layers": [{"id": "choice", "kind": "choice"}]}],
+    "installation": {"mcp_main": []},
+    "registration": {"mcp_main": []},
+    "discovery": {"mcp_main": []},
+    "activation": {"mcp_main": []},
+    "verification": {
+        "targets": {
+            "mcp_main": {
+                "target_type": "mcp",
+                "items": [{
+                    "id": "mcp.initialize",
+                    "phase": "initialize",
+                    "target_type": "mcp",
+                    "required_for_e2e": True,
+                    "probe": {"kind": "mcp_request", "request": "initialize"},
+                }],
+            }
+        }
+    },
+    "handoffs": {},
+    "external_effects": {"mutation_surfaces": []},
+}
+
+def validate(data):
+    target = data["setup_target"]["mcp_main"]
+    runtime = target.get("runtime")
+    if runtime is None:
+        raise ValueError("setup_target.mcp_main.runtime is required")
+    if runtime.get("mode") == "process":
+        for field in ("command", "safety"):
+            if field not in runtime or runtime[field] is None:
+                raise ValueError(f"process runtime.{field} is required")
+
+valid = root / "valid.yaml"
+valid.write_text(yaml.safe_dump(contract), encoding="utf-8")
+missing_runtime = copy.deepcopy(contract)
+del missing_runtime["setup_target"]["mcp_main"]["runtime"]
+missing_runtime_path = root / "missing-runtime.yaml"
+missing_runtime_path.write_text(yaml.safe_dump(missing_runtime), encoding="utf-8")
+missing_process_field = copy.deepcopy(contract)
+missing_process_field["setup_target"]["mcp_main"]["runtime"] = {"mode": "process", "safety": "read_only"}
+missing_process_path = root / "missing-process-command.yaml"
+missing_process_path.write_text(yaml.safe_dump(missing_process_field), encoding="utf-8")
+missing_process_safety = copy.deepcopy(contract)
+missing_process_safety["setup_target"]["mcp_main"]["runtime"] = {"mode": "process", "command": ["server"]}
+missing_safety_path = root / "missing-process-safety.yaml"
+missing_safety_path.write_text(yaml.safe_dump(missing_process_safety), encoding="utf-8")
+
+validate(yaml.safe_load(valid.read_text(encoding="utf-8")))
+for path in (missing_runtime_path, missing_process_path, missing_safety_path):
+    try:
+        validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    except ValueError:
+        continue
+    raise AssertionError(f"expected rejection: {path.name}")
+PY
+}
+
+check_setup_contract_fixture() {
+  python3 - "$SKILL_DIR/references/fixtures/example-setup-contract.yaml" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+data = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+required = {
+    "setup_contract_schema_version", "setup_intent", "setup_target",
+    "complexity_triggers", "configuration_branches", "installation",
+    "registration", "discovery", "activation", "verification", "handoffs",
+    "external_effects",
+}
+assert required <= data.keys()
+assert data["setup_contract_schema_version"] == 1
+targets = data["setup_target"]
+assert set(targets) == set(data["verification"]["targets"])
+assert data["configuration_branches"]
+target_types = {"skill", "mcp", "plugin", "hook", "cli", "service", "other/custom"}
+source_kinds = {"repository_path", "url", "registry", "external_resource"}
+ref_modes = {"immutable", "mutable", "not_applicable"}
+phases = {"installation", "registration", "discovery", "activation", "runtime_start", "initialize", "tool_discovery", "representative_operation"}
+layer_kinds = {
+    "choice", "installer", "cli", "env", "settings", "generated_config",
+    "registration", "discovery", "runtime_consumer", "activation",
+    "representative_operation", "verification",
+}
+safety_values = {"read_only", "mutating", "unknown"}
+capability_id = re.compile(r"[a-z][a-z0-9_-]*\Z")
+
+for target_id, target in targets.items():
+    assert re.fullmatch(r"[a-z][a-z0-9_-]*", target_id)
+    assert target["target_type"] in target_types
+    source = target["canonical_source"]
+    assert source["kind"] in source_kinds and source["value"]
+    assert source["ref_mode"] in ref_modes
+    if source["ref_mode"] == "not_applicable":
+        assert "ref" not in source or source["ref"] is None
+    else:
+        assert source.get("ref")
+    assert target["runtime"]["mode"] == "process"
+    assert target["runtime"]["command"] == ["agent-setup-mcp-stdio-readonly"]
+    assert target["runtime"]["safety"] == "read_only"
+    assert target["runtime"]["command"] and all(isinstance(arg, str) and arg for arg in target["runtime"]["command"])
+    assert target["runtime"]["safety"] in safety_values
+    verification_target = data["verification"]["targets"][target_id]
+    assert verification_target["target_type"] == target["target_type"]
+    items = verification_target["items"]
+    item_ids = [item["id"] for item in items]
+    assert items
+    assert len(item_ids) == len(set(item_ids))
+    item_id_set = set(item_ids)
+    for item in items:
+        assert item["phase"] in phases
+        capabilities = item.get("required_capabilities", [])
+        assert all(capability_id.fullmatch(cap) for cap in capabilities)
+        assert len(capabilities) == len(set(capabilities))
+        blocked_by = item.get("blocked_by", [])
+        assert set(blocked_by) <= item_id_set
+        assert item["id"] not in blocked_by
+        probe = item["probe"]
+        if probe["kind"] == "command":
+            assert probe["argv"] and all(isinstance(arg, str) and arg for arg in probe["argv"])
+            assert probe["safety"] in safety_values
+        elif probe["kind"] == "agent_action":
+            assert probe["action"] in {"discovery", "activation"}
+            adapter = probe["adapter"]
+            assert adapter["kind"] == "command" and adapter["argv"]
+            assert all(isinstance(arg, str) and arg for arg in adapter["argv"])
+            assert adapter["stdin"] in {"prompt", "empty"}
+            assert adapter["safety"] in safety_values
+            if adapter["stdin"] == "prompt":
+                assert probe.get("prompt")
+            else:
+                assert "prompt" not in probe
+        else:
+            assert probe["kind"] == "mcp_request"
+            if probe["request"] == "representative_tool_call":
+                assert probe["tool"] and isinstance(probe["arguments"], dict)
+                assert probe["safety"] in safety_values
+                if probe["safety"] == "read_only":
+                    assert "mutation_surface_id" not in probe
+                else:
+                    assert probe["safety"] in {"mutating", "unknown"}
+                    assert probe["mutation_surface_id"]
+            else:
+                assert probe["request"] in {"initialize", "tool_discovery"}
+                assert not any(field in probe for field in ("tool", "arguments", "safety", "mutation_surface_id"))
+
+    def visit(item_id, visiting, visited):
+        assert item_id not in visiting
+        if item_id in visited:
+            return
+        visiting.add(item_id)
+        for dependency in next(item for item in items if item["id"] == item_id).get("blocked_by", []):
+            visit(dependency, visiting, visited)
+        visiting.remove(item_id)
+        visited.add(item_id)
+
+    visited = set()
+    for item_id in item_ids:
+        visit(item_id, set(), visited)
+
+for phase_name in ("installation", "registration", "discovery", "activation"):
+    for target_id, entries in data[phase_name].items():
+        assert target_id in targets
+        for entry in entries:
+            assert entry["id"] and "reference" in entry
+            reference = entry["reference"]
+            if reference["kind"] == "path":
+                assert reference["path"]
+            else:
+                assert reference["kind"] == "external_resource" and reference["value"]
+            if "verification_item_id" in entry:
+                assert entry["verification_item_id"] in {
+                    item["id"] for item in data["verification"]["targets"][target_id]["items"]
+                }
+            if "handoff_id" in entry:
+                assert entry["handoff_id"] in data["handoffs"]
+
+for branch in data["configuration_branches"]:
+    assert branch["layers"]
+    assert len({layer["id"] for layer in branch["layers"]}) == len(branch["layers"])
+    for layer in branch["layers"]:
+        assert layer["kind"] in layer_kinds
+
+surfaces = {surface["id"]: surface for surface in data["external_effects"]["mutation_surfaces"]}
+assert surfaces
+for surface in surfaces.values():
+    assert surface["scope"] in {"repository", "user_local", "global", "external"}
+    assert surface["kind"] in {"path", "glob", "external_resource"} and surface["value"]
+    if surface["scope"] == "external":
+        assert surface["kind"] == "external_resource"
+    if surface["scope"] in {"repository", "user_local"}:
+        assert surface["kind"] in {"path", "glob"}
+surface = surfaces["temporary-mcp-resource"]
+assert surface["scope"] == "external"
+assert surface["snapshot"] == "required"
+assert surface["cleanup_required"] is True
+temporary = next(
+    item for item in data["verification"]["targets"]["mcp_main"]["items"]
+    if item["id"] == "mcp.temporary-fixture"
+)
+assert temporary["probe"]["mutation_surface_id"] in surfaces
+PY
+}
+
 run_test "eval manifest parses" check_eval_manifest
 run_test "analysis detects nested scripts and lockfiles" check_analysis
 run_test "analysis uses package runner for npm tests" check_analysis_uses_package_runner_for_tests
@@ -693,6 +927,8 @@ run_test "analysis detects test targets with spaced colons" check_analysis_detec
 run_test "verification includes space-indented targets" check_verification_includes_space_indented_targets
 run_test "analysis reports invalid repository paths" check_invalid_repo_path
 run_test "verification retries after analysis failure without stale cache" check_analysis_failure_does_not_poison_cache
+run_test "Setup Contract requires runtime and process runtime fields" check_setup_contract_required_runtime_fields
+run_test "Setup Contract v1 MCP fixture validates" check_setup_contract_fixture
 
 if (( failures > 0 )); then
   exit 1

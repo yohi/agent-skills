@@ -1,0 +1,214 @@
+setup_contract_schema_version: 1
+setup_intent: "Install and verify the read-only MCP server"
+setup_target:
+  mcp_main:
+    target_type: mcp
+    canonical_source:
+      kind: repository_path
+      value: examples/mcp-server
+      ref_mode: immutable
+      ref: 0123456789abcdef0123456789abcdef01234567
+    runtime:
+      mode: process
+      command:
+        - agent-setup-mcp-stdio-readonly
+      safety: read_only
+complexity_triggers:
+  - id: mcp-runtime
+    evidence: examples/mcp-server
+    note: An MCP runtime process must be started and observed.
+configuration_branches:
+  - id: mcp-readonly
+    layers:
+      - id: server-choice
+        kind: choice
+        path: docs/setup.md
+        key: mcp_server
+      - id: server-installer
+        kind: installer
+        path: scripts/install-mcp.sh
+      - id: server-cli
+        kind: cli
+        path: docs/setup.md
+        option: --mcp-server
+      - id: server-env
+        kind: env
+        path: .env.example
+        key: MCP_SERVER
+      - id: server-settings
+        kind: settings
+        path: config/settings.yaml
+        key: mcp
+      - id: generated-settings
+        kind: generated_config
+        path: config/generated.yaml
+        key: mcp.server
+      - id: server-registration
+        kind: registration
+        path: config/generated.yaml
+        key: mcp.server
+      - id: server-discovery
+        kind: discovery
+        path: docs/setup.md
+        symbol: mcp_server
+      - id: runtime-consumer
+        kind: runtime_consumer
+        path: src/mcp_client.py
+        symbol: connect_mcp
+      - id: server-activation
+        kind: activation
+        path: src/mcp_client.py
+        symbol: start_mcp
+      - id: representative-operation
+        kind: representative_operation
+        path: src/mcp_client.py
+        symbol: list_tools
+      - id: verification-layer
+        kind: verification
+        path: tests/test_mcp.py
+installation:
+  mcp_main:
+    - id: install-mcp
+      reference:
+        kind: path
+        path: scripts/install-mcp.sh
+      verification_item_id: mcp.install
+registration:
+  mcp_main:
+    - id: register-mcp
+      reference:
+        kind: path
+        path: config/generated.yaml
+        symbol: mcp.server
+      verification_item_id: mcp.registration
+discovery:
+  mcp_main:
+    - id: discover-mcp
+      reference:
+        kind: path
+        path: src/mcp_client.py
+        symbol: connect_mcp
+      verification_item_id: mcp.tool-discovery
+activation:
+  mcp_main:
+    - id: activate-mcp
+      reference:
+        kind: external_resource
+        value: local-mcp-runtime
+      verification_item_id: mcp.representative-operation
+      handoff_id: verify-mcp-operation
+verification:
+  targets:
+    mcp_main:
+      target_type: mcp
+      items:
+        - id: mcp.install
+          phase: installation
+          target_type: mcp
+          required_for_e2e: true
+          required_capabilities:
+            - target_installation
+          blocked_by: []
+          probe:
+            kind: command
+            argv:
+              - node
+              - --version
+            safety: read_only
+        - id: mcp.registration
+          phase: registration
+          target_type: mcp
+          required_for_e2e: true
+          required_capabilities:
+            - configuration_write
+          blocked_by:
+            - mcp.install
+          probe:
+            kind: agent_action
+            action: activation
+            adapter:
+              kind: command
+              argv:
+                - node
+                - --version
+              stdin: empty
+              safety: read_only
+        - id: mcp.initialize
+          phase: initialize
+          target_type: mcp
+          required_for_e2e: true
+          required_capabilities:
+            - mcp_runtime_probe
+          blocked_by:
+            - mcp.registration
+          handoff_id: verify-mcp-initialize
+          probe:
+            kind: mcp_request
+            request: initialize
+        - id: mcp.tool-discovery
+          phase: tool_discovery
+          target_type: mcp
+          required_for_e2e: true
+          required_capabilities:
+            - mcp_runtime_probe
+          blocked_by:
+            - mcp.initialize
+          probe:
+            kind: mcp_request
+            request: tool_discovery
+        - id: mcp.representative-operation
+          phase: representative_operation
+          target_type: mcp
+          required_for_e2e: false
+          required_capabilities:
+            - mcp_runtime_probe
+          blocked_by:
+            - mcp.tool-discovery
+          probe:
+            kind: mcp_request
+            request: representative_tool_call
+            tool: health
+            arguments: {}
+            safety: read_only
+        - id: mcp.temporary-fixture
+          phase: representative_operation
+          target_type: mcp
+          required_for_e2e: false
+          required_capabilities:
+            - mcp_runtime_probe
+          blocked_by:
+            - mcp.tool-discovery
+          probe:
+            kind: mcp_request
+            request: representative_tool_call
+            tool: create_fixture
+            arguments:
+              name: example
+            safety: mutating
+            mutation_surface_id: temporary-mcp-resource
+handoffs:
+  verify-mcp-initialize:
+    actor: user
+    action: Start the MCP server and send initialize.
+    prerequisites: []
+    expected_outcome: The server returns an initialize response.
+    required_evidence:
+      - type: command_output
+        summary: initialize response
+  verify-mcp-operation:
+    actor: external
+    action: Run the representative MCP operation.
+    prerequisites:
+      - verify-mcp-initialize
+    expected_outcome: The health tool returns an observable response.
+    required_evidence:
+      - type: tool_response
+        summary: health response
+external_effects:
+  mutation_surfaces:
+    - id: temporary-mcp-resource
+      scope: external
+      kind: external_resource
+      value: local-mcp-fixture
+      snapshot: required
+      cleanup_required: true
