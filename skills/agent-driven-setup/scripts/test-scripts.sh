@@ -2646,7 +2646,7 @@ PY
       "$repo" >"$dry_result"; then
       return 1
     fi
-    python3 - "$variant" "$dry_result" <<'PY'
+    python3 - "$variant" "$dry_result" <<'PY' || return 1
 import json
 import sys
 from pathlib import Path
@@ -2902,7 +2902,7 @@ SH
       "$repo" >"$result"; then
       return 1
     fi
-    python3 - "$variant" "$result" "$request_log" <<'PY'
+    python3 - "$variant" "$result" "$request_log" <<'PY' || return 1
 import json
 import sys
 from pathlib import Path
