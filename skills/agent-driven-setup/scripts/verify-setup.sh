@@ -67,6 +67,7 @@ while [[ $# -gt 0 ]]; do
       [[ -z "$REPO_PATH" ]] || usage_error "options must precede repository path"
       [[ $# -ge 2 ]] || usage_error "missing value for --report"
       REPORT_PATH="$2"
+      [[ -n "$REPORT_PATH" ]] || usage_error "missing value for --report"
       shift 2
       ;;
     --report=*)
@@ -747,6 +748,14 @@ def decision_record(target_id, item_id, kind, argv=None, declared_safety=None):
         result.update(classify(argv, declared_safety))
     return result
 
+
+def target_type_allows_probe(target_type, kind):
+    return (
+        (kind == "command" and target_type in {"cli", "service"})
+        or (kind == "mcp_request" and target_type == "mcp")
+        or (kind == "agent_action" and target_type == "skill")
+    )
+
 before = json.loads(before_path.read_text(encoding="utf-8"))
 contract_path = (repo / contract_relative).resolve()
 if repo not in contract_path.parents or not contract_path.is_file():
@@ -781,6 +790,13 @@ for target_id, target in setup_targets.items():
             **classification,
             "decision": "not_executed",
             "reason": "dry-run never starts a target process",
+        })
+    elif isinstance(runtime, dict) and target.get("target_type") == "mcp":
+        runtimes.append({
+            "target_id": target_id,
+            "mode": runtime.get("mode"),
+            "decision": "not_executed",
+            "reason": "unsupported MCP runtime mode is safety-blocked",
         })
 
 verification = contract.get("verification")
@@ -826,13 +842,17 @@ for target_id, verification in verification_targets.items():
             continue
         probe = item.get("probe") or {}
         kind = probe.get("kind")
+        target_type = verification.get("target_type")
         if kind == "command":
             argv = probe.get("argv")
             declared = probe.get("safety")
             if not isinstance(argv, list) or not argv or declared not in SAFETY_VALUES:
                 raise RuntimeError(f"invalid command probe for {target_id}.{item_id}")
             record = decision_record(target_id, item_id, kind, argv, declared)
-            if record["effective_safety"] == "read_only" and record["declaration_matches"]:
+            if not target_type_allows_probe(target_type, kind):
+                record["decision"] = "not_executed"
+                record["reason"] = "command probe is not authorized for this target_type"
+            elif record["effective_safety"] == "read_only" and record["declaration_matches"]:
                 record["decision"] = "execute"
                 record["reason"] = "effective read-only command probe"
             else:
@@ -847,12 +867,17 @@ for target_id, verification in verification_targets.items():
                 raise RuntimeError(f"invalid agent_action adapter for {target_id}.{item_id}")
             record = decision_record(target_id, item_id, kind, argv, declared)
             record["decision"] = "not_executed"
-            record["reason"] = "P1 agent_action remains a Contract-defined handoff boundary"
+            if not target_type_allows_probe(target_type, kind):
+                record["reason"] = "agent_action probe is not authorized for this target_type"
+            else:
+                record["reason"] = "P1 agent_action remains a Contract-defined handoff boundary"
             probes.append(record)
         elif kind == "mcp_request":
             record = decision_record(target_id, item_id, kind)
             request = probe.get("request")
-            if probe.get("mutation_surface_id"):
+            if not target_type_allows_probe(target_type, kind):
+                record["reason"] = "mcp_request probe is not authorized for this target_type"
+            elif probe.get("mutation_surface_id"):
                 record["reason"] = "temporary_fixture is not automatically executed in P1"
             elif request == "representative_tool_call" and probe.get("safety") != "read_only":
                 record["reason"] = "mutating or unknown MCP representative call is safety-blocked"
@@ -935,9 +960,7 @@ for target_id in sorted(report_verification_targets):
         handoff_id = item.get("handoff_id")
         probe = item.get("probe") or {}
         if (
-            isinstance(probe, dict)
-            and probe.get("kind") == "agent_action"
-            and isinstance(handoff_id, str)
+            isinstance(handoff_id, str)
             and isinstance(handoff_definitions.get(handoff_id), dict)
         ):
             handoff_references.append({
@@ -1115,6 +1138,24 @@ def capability_result(status, reason, evidence):
         "reason": reason,
         "evidence": evidence,
     }
+
+
+def target_type_allows_probe(target_type, kind):
+    return (
+        (kind == "command" and target_type in {"cli", "service"})
+        or (kind == "mcp_request" and target_type == "mcp")
+        or (kind == "agent_action" and target_type == "skill")
+    )
+
+
+def must_apply_executor_safety_gate(target, target_type, probe):
+    kind = probe.get("kind") if isinstance(probe, dict) else None
+    if not target_type_allows_probe(target_type, kind):
+        return True
+    if kind == "mcp_request":
+        runtime = target.get("runtime") if isinstance(target, dict) else None
+        return not isinstance(runtime, dict) or runtime.get("mode") != "process"
+    return False
 
 
 def load_capability_definitions():
@@ -1479,6 +1520,12 @@ for target_id in sorted(verification_targets):
                 else "target has confirmed audit findings"
             )
         else:
+            probe = item.get("probe") or {}
+            executor_safety_gate = must_apply_executor_safety_gate(
+                setup_targets.get(target_id, {}),
+                target_type,
+                probe,
+            )
             capability_issue = next(
                 (
                     (capability, capability_assessment.get(capability))
@@ -1489,7 +1536,7 @@ for target_id in sorted(verification_targets):
                 ),
                 None,
             )
-            if capability_issue:
+            if capability_issue and not executor_safety_gate:
                 capability, capability_record = capability_issue
                 capability_status = capability_record["status"]
                 record["status"] = "not_verified"
@@ -1497,7 +1544,7 @@ for target_id in sorted(verification_targets):
                     f"required capability {capability} is {capability_status}"
                 )
                 record["evidence"] = capability_record.get("evidence", [])
-                record["error_category"] = f"capability_{capability_status}"
+                record["error_category"] = "capability_unavailable"
             else:
                 dependencies = item.get("blocked_by", [])
                 blocked_dependency = next(

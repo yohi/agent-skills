@@ -1094,6 +1094,35 @@ elif variant == "repository-source-symlink":
     contract["setup_target"]["cli_main"]["canonical_source"]["value"] = "linked-source"
 elif variant == "unknown-layer-kind":
     contract["configuration_branches"][0]["layers"][0]["kind"] = "future_layer"
+elif variant == "command-safety":
+    target = contract["setup_target"]["cli_main"]
+    target["runtime"] = {
+        "mode": "process",
+        "command": ["node", "--version"],
+        "safety": "read_only",
+    }
+    verification_target = contract["verification"]["targets"]["cli_main"]
+    command_specs = [
+        ("command.node", ["node", "--version"], "read_only"),
+        ("command.git", ["git", "status", "--porcelain"], "read_only"),
+        ("command.npm", ["npm", "install"], "mutating"),
+        ("command.unknown", ["unknown-command", "--check"], "read_only"),
+        ("command.mismatch", ["node", "--version"], "mutating"),
+        ("command.absolute", ["/usr/bin/node", "--version"], "read_only"),
+        ("command.wrapper", ["env", "node", "--version"], "read_only"),
+        ("command.trailing", ["node", "--version", "--verbose"], "read_only"),
+    ]
+    verification_target["items"] = [
+        {
+            "id": item_id,
+            "phase": "discovery",
+            "target_type": "cli",
+            "required_for_e2e": True,
+            "blocked_by": [],
+            "probe": {"kind": "command", "argv": argv, "safety": safety},
+        }
+        for item_id, argv, safety in command_specs
+    ]
 elif variant == "readonly-node":
     target = contract["setup_target"]["cli_main"]
     target["runtime"] = {
@@ -1106,7 +1135,7 @@ elif variant == "readonly-node":
         "argv": ["node", "--version"],
         "safety": "read_only",
     }
-elif variant == "mcp-initialize":
+elif variant in {"mcp-initialize", "mcp-tool-discovery", "mcp-representative-readonly"}:
     target = contract["setup_target"]["cli_main"]
     target["target_type"] = "mcp"
     target["runtime"] = {
@@ -1116,13 +1145,36 @@ elif variant == "mcp-initialize":
     }
     verification_target = contract["verification"]["targets"]["cli_main"]
     verification_target["target_type"] = "mcp"
-    verification_target["items"][0] = {
-        "id": "mcp.initialize",
-        "phase": "initialize",
-        "target_type": "mcp",
-        "required_for_e2e": True,
-        "probe": {"kind": "mcp_request", "request": "initialize"},
-    }
+    if variant == "mcp-initialize":
+        verification_target["items"][0] = {
+            "id": "mcp.initialize",
+            "phase": "initialize",
+            "target_type": "mcp",
+            "required_for_e2e": True,
+            "probe": {"kind": "mcp_request", "request": "initialize"},
+        }
+    elif variant == "mcp-tool-discovery":
+        verification_target["items"][0] = {
+            "id": "mcp.tool-discovery",
+            "phase": "tool_discovery",
+            "target_type": "mcp",
+            "required_for_e2e": True,
+            "probe": {"kind": "mcp_request", "request": "tool_discovery"},
+        }
+    else:
+        verification_target["items"][0] = {
+            "id": "mcp.representative-readonly",
+            "phase": "representative_operation",
+            "target_type": "mcp",
+            "required_for_e2e": True,
+            "probe": {
+                "kind": "mcp_request",
+                "request": "representative_tool_call",
+                "tool": "read_fixture",
+                "arguments": {"name": "test"},
+                "safety": "read_only",
+            },
+        }
 elif variant == "temporary-fixture":
     target = contract["setup_target"]["cli_main"]
     target["target_type"] = "mcp"
@@ -1804,7 +1856,7 @@ contract = {
             },
         },
         "other_valid": {
-            "target_type": "other/custom",
+            "target_type": "service",
             "canonical_source": {
                 "kind": "repository_path",
                 "value": "other",
@@ -1876,12 +1928,12 @@ contract = {
                 ],
             },
             "other_valid": {
-                "target_type": "other/custom",
+                "target_type": "service",
                 "items": [
                     {
                         "id": "other.install",
                         "phase": "installation",
-                        "target_type": "other/custom",
+                        "target_type": "service",
                         "required_for_e2e": True,
                         "blocked_by": [],
                         "probe": {
@@ -2153,6 +2205,29 @@ assert json.loads(sys.argv[1]) == {
 PY
 }
 
+check_target_probe_classifier_requires_exact_argv() {
+  local classify="$SCRIPT_DIR/run-target-probes.sh"
+  local result
+
+  for input in \
+    '{"argv":["/usr/bin/node","--version"],"declared_safety":"read_only"}' \
+    '{"argv":["env","node","--version"],"declared_safety":"read_only"}' \
+    '{"argv":["node","--version","--verbose"],"declared_safety":"read_only"}'; do
+    if ! result="$(printf '%s\n' "$input" | bash "$classify" --classify-only)"; then
+      return 1
+    fi
+    python3 - "$result" <<'PY' || return 1
+import json
+import sys
+
+assert json.loads(sys.argv[1]) == {
+    "effective_safety": "unknown",
+    "declaration_matches": False,
+}
+PY
+  done
+}
+
 check_target_probe_readonly_command() {
   local repo="$TEMP_DIR/probe-readonly-repo"
   local evidence="$TEMP_DIR/probe-readonly-evidence"
@@ -2179,6 +2254,467 @@ assert data["error_category"] is None
 PY
 }
 
+check_target_probe_command_safety_boundaries() {
+  local repo="$TEMP_DIR/probe-command-safety-repo"
+  local fake_bin="$TEMP_DIR/probe-command-safety-bin"
+  local marker_dir="$TEMP_DIR/probe-command-safety-markers"
+  local normal_result="$TEMP_DIR/probe-command-safety-normal.json"
+  local dry_result="$TEMP_DIR/probe-command-safety-dry.json"
+  local real_git
+  local normal_status
+  local dry_status
+  mkdir -p "$repo" "$fake_bin" "$marker_dir"
+  write_audit_contract "$repo/contract.md" command-safety
+  real_git="$(command -v git)"
+
+  for executable in node git npm unknown-command env; do
+    cat >"$fake_bin/$executable" <<SH
+#!/bin/sh
+if [ "\${1:-}" = "-C" ]; then
+  exec "$real_git" "\$@"
+fi
+touch "$marker_dir/$executable"
+printf '%s\n' fixture
+exit 0
+SH
+    chmod +x "$fake_bin/$executable"
+  done
+
+  if PATH="$fake_bin:$PATH" bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    "$repo" >"$normal_result"; then
+    return 1
+  else
+    normal_status=$?
+  fi
+  [[ "$normal_status" == 4 ]] || return 1
+
+  python3 - "$normal_result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+items = {item["id"]: item for item in report["targets"]["cli_main"]["items"]}
+for item_id in ("command.node", "command.git"):
+    assert items[item_id]["status"] == "verified"
+    assert items[item_id]["error_category"] is None
+for item_id in (
+    "command.npm",
+    "command.unknown",
+    "command.mismatch",
+    "command.absolute",
+    "command.wrapper",
+    "command.trailing",
+):
+    assert items[item_id]["status"] == "not_verified"
+    assert items[item_id]["error_category"] == "safety_blocked"
+PY
+  [[ -e "$marker_dir/node" ]] || return 1
+  [[ -e "$marker_dir/git" ]] || return 1
+  for executable in npm unknown-command env; do
+    [[ ! -e "$marker_dir/$executable" ]] || return 1
+  done
+
+  if PATH="$fake_bin:$PATH" bash "$SCRIPT_DIR/verify-setup.sh" \
+    --dry-run \
+    --contract contract.md \
+    "$repo" >"$dry_result"; then
+    dry_status=0
+  else
+    dry_status=$?
+  fi
+  [[ "$dry_status" == 0 ]] || return 1
+  python3 - "$dry_result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+probes = {probe["item_id"]: probe for probe in data["dry_run"]["probes"]}
+expected = {
+    "command.node": ("read_only", True, "execute"),
+    "command.git": ("read_only", True, "execute"),
+    "command.npm": ("mutating", True, "not_executed"),
+    "command.unknown": ("unknown", False, "not_executed"),
+    "command.mismatch": ("read_only", False, "not_executed"),
+    "command.absolute": ("unknown", False, "not_executed"),
+    "command.wrapper": ("unknown", False, "not_executed"),
+    "command.trailing": ("unknown", False, "not_executed"),
+}
+for item_id, (effective, matches, decision) in expected.items():
+    probe = probes[item_id]
+    assert probe["effective_safety"] == effective
+    assert probe["declaration_matches"] is matches
+    assert probe["decision"] == decision
+PY
+  for executable in npm unknown-command env; do
+    [[ ! -e "$marker_dir/$executable" ]] || return 1
+  done
+}
+
+check_target_probe_enforces_target_type_boundaries() {
+  local repo="$TEMP_DIR/probe-target-type-repo"
+  local evidence="$TEMP_DIR/probe-target-type-evidence"
+  local fake_bin="$TEMP_DIR/probe-target-type-bin"
+  local marker="$TEMP_DIR/probe-target-type-started"
+  local result="$TEMP_DIR/probe-target-type-result.json"
+  mkdir -p "$repo" "$evidence" "$fake_bin"
+
+  cat >"$fake_bin/node" <<SH
+#!/bin/sh
+touch "$marker"
+printf '%s\n' fixture
+SH
+  cat >"$fake_bin/agent-setup-mcp-stdio-readonly" <<SH
+#!/bin/sh
+touch "$marker"
+while IFS= read -r request; do
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+done
+SH
+  chmod +x "$fake_bin/node" "$fake_bin/agent-setup-mcp-stdio-readonly"
+
+  for variant in command-on-mcp mcp-on-cli agent-on-cli; do
+    write_audit_contract "$repo/contract.md" readonly-node
+    python3 - "$repo/contract.md" "$variant" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+variant = sys.argv[2]
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+target = contract["setup_target"]["cli_main"]
+verification = contract["verification"]["targets"]["cli_main"]
+item = verification["items"][0]
+
+if variant == "command-on-mcp":
+    target["target_type"] = "mcp"
+    verification["target_type"] = "mcp"
+    item["target_type"] = "mcp"
+elif variant == "mcp-on-cli":
+    target["runtime"] = {
+        "mode": "process",
+        "command": ["agent-setup-mcp-stdio-readonly"],
+        "safety": "read_only",
+    }
+    item["probe"] = {"kind": "mcp_request", "request": "initialize"}
+else:
+    item["probe"] = {
+        "kind": "agent_action",
+        "action": "discovery",
+        "adapter": {
+            "kind": "command",
+            "argv": ["node", "--version"],
+            "stdin": "empty",
+            "safety": "read_only",
+        },
+    }
+
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+
+    rm -f "$marker"
+    if ! PATH="$fake_bin:$PATH" \
+      AGENT_SETUP_MCP_FIXTURE="$fake_bin/agent-setup-mcp-stdio-readonly" \
+      bash "$SCRIPT_DIR/run-target-probes.sh" \
+      --contract contract.md \
+      --target cli_main \
+      --item cli.install \
+      --evidence-dir "$evidence" \
+      "$repo" >"$result"; then
+      return 1
+    fi
+    python3 - "$result" <<'PY' || return 1
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["status"] == "not_verified"
+assert data["error_category"] == "safety_blocked"
+PY
+    [[ ! -e "$marker" ]] || return 1
+  done
+}
+
+check_target_probe_normal_dry_run_classifier_parity() {
+  local repo="$TEMP_DIR/probe-classifier-parity-repo"
+  local fake_bin="$TEMP_DIR/probe-classifier-parity-bin"
+  local normal_result="$TEMP_DIR/probe-classifier-parity-normal.json"
+  local dry_result="$TEMP_DIR/probe-classifier-parity-dry.json"
+  local normal_status
+  local real_git
+  mkdir -p "$repo" "$fake_bin"
+  write_audit_contract "$repo/contract.md" command-safety
+  real_git="$(command -v git)"
+
+  for executable in node git npm unknown-command env; do
+    cat >"$fake_bin/$executable" <<SH
+#!/bin/sh
+if [ "\${1:-}" = "-C" ]; then
+  exec "$real_git" "\$@"
+fi
+printf '%s\n' fixture
+exit 0
+SH
+    chmod +x "$fake_bin/$executable"
+  done
+
+  if PATH="$fake_bin:$PATH" bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    "$repo" >"$normal_result"; then
+    return 1
+  else
+    normal_status=$?
+  fi
+  [[ "$normal_status" == 4 ]] || return 1
+
+  PATH="$fake_bin:$PATH" bash "$SCRIPT_DIR/verify-setup.sh" \
+    --dry-run \
+    --contract contract.md \
+    "$repo" >"$dry_result"
+
+  python3 - "$repo/contract.md" "$normal_result" "$dry_result" "$SCRIPT_DIR/run-target-probes.sh" <<'PY' || return 1
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+contract_path, normal_path, dry_path, classifier = sys.argv[1:]
+contract_text = Path(contract_path).read_text(encoding="utf-8")
+contract = yaml.safe_load(contract_text.split("\n---", 1)[0][4:])
+normal = json.loads(Path(normal_path).read_text(encoding="utf-8"))["verification_report"]
+dry = json.loads(Path(dry_path).read_text(encoding="utf-8"))["dry_run"]
+normal_items = {
+    item["id"]: item for item in normal["targets"]["cli_main"]["items"]
+}
+dry_items = {probe["item_id"]: probe for probe in dry["probes"]}
+
+for item in contract["verification"]["targets"]["cli_main"]["items"]:
+    probe = item["probe"]
+    payload = json.dumps({
+        "argv": probe["argv"],
+        "declared_safety": probe["safety"],
+    })
+    normal_classified = json.loads(subprocess.run(
+        ["bash", classifier, "--classify-only"],
+        input=payload + "\n",
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout)
+    dry_classified = json.loads(subprocess.run(
+        ["bash", classifier, "--classify-only"],
+        input=payload + "\n",
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout)
+    assert normal_classified == dry_classified
+    classified = normal_classified
+    dry_probe = dry_items[item["id"]]
+    assert dry_probe["effective_safety"] == classified["effective_safety"]
+    assert dry_probe["declaration_matches"] is classified["declaration_matches"]
+    normal_item = normal_items[item["id"]]
+    if (
+        classified["effective_safety"] == "read_only"
+        and classified["declaration_matches"]
+    ):
+        assert normal_item["status"] == "verified"
+        assert normal_item["error_category"] is None
+    else:
+        assert normal_item["status"] == "not_verified"
+        assert normal_item["error_category"] == "safety_blocked"
+    assert dry_probe["decision"] in {"execute", "not_executed"}
+
+for label, argv, declared_safety, expected_safety, expected_match in (
+    ("safe MCP runtime", ["agent-setup-mcp-stdio-readonly"], "read_only", "read_only", True),
+    ("mutating command", ["npm", "install"], "mutating", "mutating", True),
+    ("unknown command", ["unknown-command", "--check"], "read_only", "unknown", False),
+    ("read-only command", ["node", "--version"], "read_only", "read_only", True),
+    ("safe Skill adapter", ["node", "--version"], "read_only", "read_only", True),
+):
+    payload = json.dumps({"argv": argv, "declared_safety": declared_safety})
+    normal_classified = json.loads(subprocess.run(
+        ["bash", classifier, "--classify-only"],
+        input=payload + "\n", text=True, capture_output=True, check=True,
+    ).stdout)
+    dry_classified = json.loads(subprocess.run(
+        ["bash", classifier, "--classify-only"],
+        input=payload + "\n", text=True, capture_output=True, check=True,
+    ).stdout)
+    assert normal_classified == dry_classified
+    assert normal_classified["effective_safety"] == expected_safety
+    assert normal_classified["declaration_matches"] is expected_match
+PY
+}
+
+check_target_probe_mcp_runtime_safety_variants() {
+  local repo="$TEMP_DIR/probe-mcp-runtime-safety-repo"
+  local evidence="$TEMP_DIR/probe-mcp-runtime-safety-evidence"
+  local fake_bin="$TEMP_DIR/probe-mcp-runtime-safety-bin"
+  local marker="$TEMP_DIR/probe-mcp-runtime-safety-started"
+  local normal_result="$TEMP_DIR/probe-mcp-runtime-safety-normal.json"
+  local dry_result="$TEMP_DIR/probe-mcp-runtime-safety-dry.json"
+  mkdir -p "$repo" "$evidence" "$fake_bin"
+  write_audit_contract "$repo/contract.md" mcp-initialize
+  cat >"$fake_bin/agent-setup-mcp-stdio-readonly" <<SH
+#!/bin/sh
+touch "$marker"
+while IFS= read -r request; do
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+done
+SH
+  chmod +x "$fake_bin/agent-setup-mcp-stdio-readonly"
+
+  for variant in safe mutating unknown mismatch; do
+    rm -f "$marker"
+    python3 - "$repo/contract.md" "$variant" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+variant = sys.argv[2]
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+runtime = contract["setup_target"]["cli_main"]["runtime"]
+if variant == "safe":
+    runtime["command"] = ["agent-setup-mcp-stdio-readonly"]
+    runtime["safety"] = "read_only"
+elif variant == "mutating":
+    runtime["command"] = ["npm", "install"]
+    runtime["safety"] = "mutating"
+elif variant == "unknown":
+    runtime["command"] = ["unknown-command", "--check"]
+    runtime["safety"] = "read_only"
+else:
+    runtime["command"] = ["agent-setup-mcp-stdio-readonly"]
+    runtime["safety"] = "mutating"
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+
+    if ! AGENT_SETUP_MCP_FIXTURE="$fake_bin/agent-setup-mcp-stdio-readonly" \
+      bash "$SCRIPT_DIR/run-target-probes.sh" \
+      --contract contract.md \
+      --target cli_main \
+      --item mcp.initialize \
+      --evidence-dir "$evidence" \
+      "$repo" >"$normal_result"; then
+      return 1
+    fi
+    python3 - "$variant" "$normal_result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+variant = sys.argv[1]
+data = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+if variant == "safe":
+    assert data["status"] == "verified"
+    assert data["error_category"] is None
+else:
+    assert data["status"] == "not_verified"
+    assert data["error_category"] == "safety_blocked"
+PY
+    if [[ "$variant" == safe ]]; then
+      [[ -e "$marker" ]] || return 1
+    else
+      [[ ! -e "$marker" ]] || return 1
+    fi
+
+    if ! AGENT_SETUP_MCP_FIXTURE="$fake_bin/agent-setup-mcp-stdio-readonly" \
+      bash "$SCRIPT_DIR/verify-setup.sh" \
+      --dry-run \
+      --contract contract.md \
+      "$repo" >"$dry_result"; then
+      return 1
+    fi
+    python3 - "$variant" "$dry_result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+variant = sys.argv[1]
+data = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+runtime = data["dry_run"]["runtimes"][0]
+expected = {
+    "safe": ("read_only", True),
+    "mutating": ("mutating", True),
+    "unknown": ("unknown", False),
+    "mismatch": ("read_only", False),
+}[variant]
+assert (runtime["effective_safety"], runtime["declaration_matches"]) == expected
+assert runtime["decision"] == "not_executed"
+assert data["dry_run"]["probes"][0]["decision"] == "not_executed"
+PY
+  done
+}
+
+check_target_probe_blocks_unsupported_mcp_runtime_modes() {
+  local repo="$TEMP_DIR/probe-mcp-unsupported-runtime-repo"
+  local evidence="$TEMP_DIR/probe-mcp-unsupported-runtime-evidence"
+  local fake_bin="$TEMP_DIR/probe-mcp-unsupported-runtime-bin"
+  local marker="$TEMP_DIR/probe-mcp-unsupported-runtime-started"
+  local result="$TEMP_DIR/probe-mcp-unsupported-runtime-result.json"
+  mkdir -p "$repo" "$evidence" "$fake_bin"
+  write_audit_contract "$repo/contract.md" mcp-initialize
+  cat >"$fake_bin/agent-setup-mcp-stdio-readonly" <<SH
+#!/bin/sh
+touch "$marker"
+exit 0
+SH
+  chmod +x "$fake_bin/agent-setup-mcp-stdio-readonly"
+
+  for mode in in_process agent_discovery external_service not_applicable; do
+    python3 - "$repo/contract.md" "$mode" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+mode = sys.argv[2]
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+contract["setup_target"]["cli_main"]["runtime"] = {"mode": mode}
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+    rm -f "$marker"
+    if ! PATH="$fake_bin:$PATH" \
+      AGENT_SETUP_MCP_FIXTURE="$fake_bin/agent-setup-mcp-stdio-readonly" \
+      bash "$SCRIPT_DIR/run-target-probes.sh" \
+      --contract contract.md \
+      --target cli_main \
+      --item mcp.initialize \
+      --evidence-dir "$evidence" \
+      "$repo" >"$result"; then
+      return 1
+    fi
+    python3 - "$result" <<'PY' || return 1
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["status"] == "not_verified"
+assert data["error_category"] == "safety_blocked"
+PY
+    [[ ! -e "$marker" ]] || return 1
+  done
+}
+
 check_target_probe_mcp_initialize() {
   local repo="$TEMP_DIR/probe-mcp-repo"
   local evidence="$TEMP_DIR/probe-mcp-evidence"
@@ -2186,6 +2722,7 @@ check_target_probe_mcp_initialize() {
   local path_bin="$TEMP_DIR/probe-mcp-path-bin"
   local trusted_marker="$TEMP_DIR/probe-mcp-trusted"
   local path_marker="$TEMP_DIR/probe-mcp-path"
+  local request_log="$TEMP_DIR/probe-mcp-initialize-requests.jsonl"
   local result="$TEMP_DIR/probe-mcp-result.json"
   mkdir -p "$repo" "$evidence" "$fake_bin" "$path_bin"
   write_audit_contract "$repo/contract.md" mcp-initialize
@@ -2193,7 +2730,14 @@ check_target_probe_mcp_initialize() {
 #!/bin/sh
 touch "$trusted_marker"
 while IFS= read -r request; do
-  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+  printf '%s\n' "\$request" >> "$request_log"
+  case "\$request" in
+    *'"method":"notifications/initialized"'*)
+      ;;
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"fixture","version":"1.0.0"}}}'
+      ;;
+  esac
 done
 SH
   cat >"$path_bin/agent-setup-mcp-stdio-readonly" <<SH
@@ -2225,6 +2769,218 @@ assert data["error_category"] is None
 PY
   [[ -e "$trusted_marker" ]]
   [[ ! -e "$path_marker" ]]
+  python3 - "$request_log" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+requests = [
+    json.loads(line)
+    for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+]
+assert [request["method"] for request in requests] == [
+    "initialize",
+    "notifications/initialized",
+]
+assert requests[0]["id"] == 1
+assert requests[0]["params"] == {
+    "protocolVersion": "2025-06-18",
+    "capabilities": {},
+    "clientInfo": {
+        "name": "agent-driven-setup-probe",
+        "version": "1.0.0",
+    },
+}
+assert "id" not in requests[1]
+PY
+}
+
+check_target_probe_validates_mcp_fixture_path() {
+  local repo="$TEMP_DIR/probe-mcp-fixture-validation-repo"
+  local evidence="$TEMP_DIR/probe-mcp-fixture-validation-evidence"
+  local fake_bin="$TEMP_DIR/probe-mcp-fixture-validation-bin"
+  local external_fixture="$fake_bin/agent-setup-mcp-stdio-readonly"
+  local internal_fixture="$repo/agent-setup-mcp-stdio-readonly"
+  local internal_link="$repo/agent-setup-mcp-stdio-readonly-link"
+  local result="$TEMP_DIR/probe-mcp-fixture-validation-result.json"
+  local fixture
+  local expected_category
+  local expected_status
+  local case_value
+  mkdir -p "$repo" "$evidence" "$fake_bin"
+  write_audit_contract "$repo/contract.md" mcp-initialize
+  cat >"$external_fixture" <<'SH'
+#!/bin/sh
+while IFS= read -r request; do
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+done
+SH
+  chmod +x "$external_fixture"
+  printf '%s\n' '#!/bin/sh' 'exit 0' >"$internal_fixture"
+  chmod +x "$internal_fixture"
+  ln -s "$external_fixture" "$internal_link"
+
+  for case_value in \
+    "relative-fixture not_verified capability_unavailable" \
+    "$external_fixture verified null" \
+    "$internal_fixture not_verified safety_blocked" \
+    "$internal_link not_verified safety_blocked"; do
+    read -r fixture expected_status expected_category <<<"$case_value"
+    if ! AGENT_SETUP_MCP_FIXTURE="$fixture" \
+      bash "$SCRIPT_DIR/run-target-probes.sh" \
+      --contract contract.md \
+      --target cli_main \
+      --item mcp.initialize \
+      --evidence-dir "$evidence" \
+      "$repo" >"$result"; then
+      return 1
+    fi
+    python3 - "$result" "$expected_status" "$expected_category" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["status"] == sys.argv[2]
+if sys.argv[3] == "null":
+    assert data["error_category"] is None
+else:
+    assert data["error_category"] == sys.argv[3]
+PY
+  done
+}
+
+check_target_probe_mcp_protocol_operations() {
+  local repo="$TEMP_DIR/probe-mcp-protocol-repo"
+  local evidence="$TEMP_DIR/probe-mcp-protocol-evidence"
+  local fake_bin="$TEMP_DIR/probe-mcp-protocol-bin"
+  local request_log="$TEMP_DIR/probe-mcp-protocol-requests.jsonl"
+  local result="$TEMP_DIR/probe-mcp-protocol-result.json"
+  mkdir -p "$repo" "$evidence" "$fake_bin"
+
+  cat >"$fake_bin/agent-setup-mcp-stdio-readonly" <<SH
+#!/bin/sh
+while IFS= read -r request; do
+  printf '%s\n' "\$request" >> "$request_log"
+  case "\$request" in
+    *'"method":"notifications/initialized"'*)
+      ;;
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"fixture","version":"1.0.0"}}}'
+      ;;
+    *'"method":"tools/list"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}'
+      ;;
+    *'"method":"tools/call"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"fixture"}]}}'
+      ;;
+  esac
+done
+SH
+  chmod +x "$fake_bin/agent-setup-mcp-stdio-readonly"
+
+  for variant in mcp-tool-discovery mcp-representative-readonly; do
+    write_audit_contract "$repo/contract.md" "$variant"
+    : >"$request_log"
+    if ! AGENT_SETUP_MCP_FIXTURE="$fake_bin/agent-setup-mcp-stdio-readonly" \
+      bash "$SCRIPT_DIR/run-target-probes.sh" \
+      --contract contract.md \
+      --target cli_main \
+      --item "$(if [[ "$variant" == mcp-tool-discovery ]]; then printf '%s' mcp.tool-discovery; else printf '%s' mcp.representative-readonly; fi)" \
+      --evidence-dir "$evidence" \
+      "$repo" >"$result"; then
+      return 1
+    fi
+    python3 - "$variant" "$result" "$request_log" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+variant = sys.argv[1]
+result = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+assert result["status"] == "verified"
+assert result["error_category"] is None
+requests = [
+    json.loads(line)
+    for line in Path(sys.argv[3]).read_text(encoding="utf-8").splitlines()
+]
+if variant == "mcp-tool-discovery":
+    assert [request["method"] for request in requests] == [
+        "initialize",
+        "notifications/initialized",
+        "tools/list",
+    ]
+    assert requests[0]["id"] == 1
+    assert requests[0]["params"] == {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {
+            "name": "agent-driven-setup-probe",
+            "version": "1.0.0",
+        },
+    }
+    assert "id" not in requests[1]
+    assert requests[2]["id"] == 2
+    assert requests[2]["params"] == {}
+else:
+    assert [request["method"] for request in requests] == [
+        "initialize",
+        "notifications/initialized",
+        "tools/list",
+        "tools/call",
+    ]
+    assert requests[0]["id"] == 1
+    assert requests[0]["params"] == {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {
+            "name": "agent-driven-setup-probe",
+            "version": "1.0.0",
+        },
+    }
+    assert "id" not in requests[1]
+    assert requests[2]["id"] == 2
+    assert requests[2]["params"] == {}
+    assert requests[3]["id"] == 3
+    assert requests[3]["params"] == {
+        "name": "read_fixture",
+        "arguments": {"name": "test"},
+    }
+PY
+  done
+}
+
+check_target_probe_rejects_mcp_initialize_error() {
+  local repo="$TEMP_DIR/probe-mcp-error-repo"
+  local evidence="$TEMP_DIR/probe-mcp-error-evidence"
+  local fake_bin="$TEMP_DIR/probe-mcp-error-bin"
+  local result="$TEMP_DIR/probe-mcp-error-result.json"
+  mkdir -p "$repo" "$evidence" "$fake_bin"
+  write_audit_contract "$repo/contract.md" mcp-initialize
+  cat >"$fake_bin/agent-setup-mcp-stdio-readonly" <<'SH'
+#!/bin/sh
+while IFS= read -r request; do
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"fixture initialization failed"}}'
+done
+SH
+  chmod +x "$fake_bin/agent-setup-mcp-stdio-readonly"
+
+  if ! AGENT_SETUP_MCP_FIXTURE="$fake_bin/agent-setup-mcp-stdio-readonly" \
+    bash "$SCRIPT_DIR/run-target-probes.sh" \
+    --contract contract.md \
+    --target cli_main \
+    --item mcp.initialize \
+    --evidence-dir "$evidence" \
+    "$repo" >"$result"; then
+    return 1
+  fi
+  python3 - "$result" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["status"] == "not_verified"
+assert data["error_category"] == "runtime_failure"
+PY
 }
 
 check_target_probe_rejects_malformed_mcp_response() {
@@ -2292,6 +3048,191 @@ assert data["status"] == "not_verified"
 assert data["error_category"] == "safety_blocked"
 PY
   [[ ! -e "$marker" ]]
+}
+
+check_verification_temporary_fixture_handoff_boundary() {
+  local repo="$TEMP_DIR/temporary-handoff-repo"
+  local fake_bin="$TEMP_DIR/temporary-handoff-bin"
+  local runtime_marker="$TEMP_DIR/temporary-handoff-runtime-started"
+  local normal_result="$TEMP_DIR/temporary-handoff-normal.json"
+  local dry_result="$TEMP_DIR/temporary-handoff-dry.json"
+  local normal_status
+  local dry_status
+  mkdir -p "$repo" "$fake_bin"
+  write_audit_contract "$repo/contract.md" temporary-fixture
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+contract["verification"]["targets"]["cli_main"]["items"][0]["handoff_id"] = "temporary-review"
+contract["handoffs"] = {
+    "temporary-review": {
+        "actor": "user",
+        "action": "Review the temporary resource operation.",
+        "prerequisites": [],
+        "expected_outcome": "The temporary resource is approved.",
+        "required_evidence": [{"type": "command_output", "summary": "review"}],
+    }
+}
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+  cat >"$fake_bin/agent-setup-mcp-stdio-readonly" <<SH
+#!/bin/sh
+touch "$runtime_marker"
+exit 0
+SH
+  chmod +x "$fake_bin/agent-setup-mcp-stdio-readonly"
+
+  if PATH="$fake_bin:$PATH" \
+    AGENT_SETUP_MCP_FIXTURE="$fake_bin/agent-setup-mcp-stdio-readonly" \
+    bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    "$repo" >"$normal_result"; then
+    return 1
+  else
+    normal_status=$?
+  fi
+  [[ "$normal_status" == 4 ]] || return 1
+  [[ ! -e "$runtime_marker" ]] || return 1
+  python3 - "$normal_result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+item = report["targets"]["cli_main"]["items"][0]
+assert item["status"] == "not_verified"
+assert item["error_category"] == "safety_blocked"
+assert len(report["handoffs"]) == 1
+assert report["handoffs"][0]["handoff_id"] == "temporary-review"
+PY
+
+  if PATH="$fake_bin:$PATH" \
+    AGENT_SETUP_MCP_FIXTURE="$fake_bin/agent-setup-mcp-stdio-readonly" \
+    bash "$SCRIPT_DIR/verify-setup.sh" \
+    --dry-run \
+    --contract contract.md \
+    "$repo" >"$dry_result"; then
+    dry_status=0
+  else
+    dry_status=$?
+  fi
+  [[ "$dry_status" == 0 ]] || return 1
+  [[ ! -e "$runtime_marker" ]] || return 1
+  python3 - "$dry_result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert data["dry_run"]["decision"] == "not_executed"
+assert data["dry_run"]["probes"][0]["decision"] == "not_executed"
+assert data["verification_report"]["handoffs"] == []
+assert [
+    reference["handoff_id"]
+    for reference in data["verification_report"]["handoff_references"]
+] == ["temporary-review"]
+PY
+}
+
+check_non_probe_plugin_uses_only_defined_handoff() {
+  local repo="$TEMP_DIR/plugin-handoff-repo"
+  local normal_result="$TEMP_DIR/plugin-handoff-normal.json"
+  local dry_result="$TEMP_DIR/plugin-handoff-dry.json"
+  local normal_status
+  local dry_status
+  mkdir -p "$repo"
+  write_dry_run_contract "$repo/contract.md"
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+target = contract["setup_target"]["cli_main"]
+target["target_type"] = "plugin"
+target["runtime"] = {"mode": "in_process"}
+contract["setup_target"] = {"cli_main": target}
+verification_target = contract["verification"]["targets"]["cli_main"]
+verification_target["target_type"] = "plugin"
+verification_target["items"] = [{
+    "id": "plugin.activation",
+    "phase": "activation",
+    "target_type": "plugin",
+    "required_for_e2e": False,
+    "blocked_by": [],
+    "handoff_id": "plugin-review",
+}]
+contract["verification"] = {"targets": {"cli_main": verification_target}}
+for section in ("installation", "registration", "discovery", "activation"):
+    contract[section] = {"cli_main": contract[section]["cli_main"]}
+contract["handoffs"] = {
+    "plugin-review": {
+        "actor": "user",
+        "action": "Review the Plugin activation.",
+        "prerequisites": [],
+        "expected_outcome": "The Plugin is activated.",
+        "required_evidence": [{"type": "command_output", "summary": "activation"}],
+    }
+}
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    "$repo" >"$normal_result"; then
+    normal_status=0
+  else
+    normal_status=$?
+  fi
+  [[ "$normal_status" == 0 ]] || return 1
+  python3 - "$normal_result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+item = report["targets"]["cli_main"]["items"][0]
+assert item["status"] == "not_verified"
+assert item["error_category"] is None
+assert report["targets"]["cli_main"]["e2e_status"] == "not_applicable"
+assert [handoff["handoff_id"] for handoff in report["handoffs"]] == ["plugin-review"]
+PY
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" \
+    --dry-run \
+    --contract contract.md \
+    "$repo" >"$dry_result"; then
+    dry_status=0
+  else
+    dry_status=$?
+  fi
+  [[ "$dry_status" == 0 ]] || return 1
+  python3 - "$dry_result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert data["dry_run"]["probes"][0]["decision"] == "not_executed"
+assert data["verification_report"]["handoffs"] == []
+assert [
+    reference["handoff_id"]
+    for reference in data["verification_report"]["handoff_references"]
+] == ["plugin-review"]
+PY
 }
 
 check_target_probe_rejects_internal_evidence_dir_without_mutation() {
@@ -2602,6 +3543,140 @@ assert item["error_category"] == "safety_blocked"
 PY
 }
 
+check_skill_discovery_and_activation_never_start_adapters() {
+  local repo="$TEMP_DIR/skill-boundary-repo"
+  local fake_bin="$TEMP_DIR/skill-boundary-bin"
+  local adapter_marker="$TEMP_DIR/skill-boundary-adapter-started"
+  local normal_result="$TEMP_DIR/skill-boundary-normal.json"
+  local dry_result="$TEMP_DIR/skill-boundary-dry.json"
+  local normal_status
+  local dry_status
+  mkdir -p "$repo/src" "$fake_bin"
+  write_dry_run_contract "$repo/contract.md"
+  python3 - "$repo/contract.md" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+contract = yaml.safe_load(path.read_text(encoding="utf-8").split("\n---", 1)[0][4:])
+skill_target = contract["setup_target"]["skill_main"]
+skill_verification = contract["verification"]["targets"]["skill_main"]
+discovery = skill_verification["items"][0]
+discovery["required_capabilities"] = ["agent_discovery_probe"]
+discovery["handoff_id"] = "skill-discovery-review"
+activation = {
+    "id": "skill.activation",
+    "phase": "activation",
+    "target_type": "skill",
+    "required_for_e2e": True,
+    "blocked_by": [],
+    "required_capabilities": ["representative_activation_probe"],
+    "handoff_id": "skill-activation-review",
+    "probe": {
+        "kind": "agent_action",
+        "action": "activation",
+        "adapter": {
+            "kind": "command",
+            "argv": ["node", "--version"],
+            "stdin": "empty",
+            "safety": "read_only",
+        },
+    },
+}
+skill_verification["items"] = [discovery, activation]
+for section in ("installation", "registration", "discovery", "activation"):
+    contract[section] = {"skill_main": contract[section]["skill_main"]}
+contract["setup_target"] = {"skill_main": skill_target}
+contract["verification"] = {"targets": {"skill_main": skill_verification}}
+contract["handoffs"] = {
+    "skill-discovery-review": {
+        "actor": "user",
+        "action": "Review Skill discovery.",
+        "prerequisites": [],
+        "expected_outcome": "The Skill is discoverable.",
+        "required_evidence": [{"type": "command_output", "summary": "discovery"}],
+    },
+    "skill-activation-review": {
+        "actor": "user",
+        "action": "Review Skill activation.",
+        "prerequisites": [],
+        "expected_outcome": "The Skill is activated.",
+        "required_evidence": [{"type": "command_output", "summary": "activation"}],
+    },
+}
+path.write_text(
+    "---\n" + yaml.safe_dump(contract, sort_keys=False) + "---\n# body\n",
+    encoding="utf-8",
+)
+PY
+  cat >"$fake_bin/node" <<SH
+#!/bin/sh
+touch "$adapter_marker"
+printf '%s\n' fixture
+SH
+  chmod +x "$fake_bin/node"
+
+  if PATH="$fake_bin:$PATH" bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    "$repo" >"$normal_result"; then
+    return 1
+  else
+    normal_status=$?
+  fi
+  [[ "$normal_status" == 4 ]] || return 1
+  [[ ! -e "$adapter_marker" ]] || return 1
+  python3 - "$normal_result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+items = {item["id"]: item for item in report["targets"]["skill_main"]["items"]}
+assert set(items) == {"skill.adapter", "skill.activation"}
+for item_id, handoff_id in (
+    ("skill.adapter", "skill-discovery-review"),
+    ("skill.activation", "skill-activation-review"),
+):
+    assert items[item_id]["status"] == "not_verified"
+    assert items[item_id]["error_category"] == "safety_blocked"
+    assert items[item_id]["handoff_id"] == handoff_id
+assert {handoff["handoff_id"] for handoff in report["handoffs"]} == {
+    "skill-discovery-review",
+    "skill-activation-review",
+}
+PY
+
+  if PATH="$fake_bin:$PATH" bash "$SCRIPT_DIR/verify-setup.sh" \
+    --dry-run \
+    --contract contract.md \
+    "$repo" >"$dry_result"; then
+    dry_status=0
+  else
+    dry_status=$?
+  fi
+  [[ "$dry_status" == 0 ]] || return 1
+  [[ ! -e "$adapter_marker" ]] || return 1
+  python3 - "$dry_result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+probes = {probe["item_id"]: probe for probe in data["dry_run"]["probes"]}
+for item_id in ("skill.adapter", "skill.activation"):
+    assert probes[item_id]["effective_safety"] == "read_only"
+    assert probes[item_id]["declaration_matches"] is True
+    assert probes[item_id]["decision"] == "not_executed"
+assert data["verification_report"]["handoffs"] == []
+assert {
+    reference["handoff_id"]
+    for reference in data["verification_report"]["handoff_references"]
+} == {"skill-discovery-review", "skill-activation-review"}
+PY
+}
+
 check_dry_run_rejects_target_internal_report() {
   local repo="$TEMP_DIR/dry-run-internal-report-repo"
   local stderr_file="$TEMP_DIR/dry-run-internal-report.stderr"
@@ -2811,7 +3886,7 @@ assert capability["reason"]
 assert capability["evidence"] == []
 item = report["targets"]["cli_main"]["items"][0]
 assert item["status"] == "not_verified"
-assert item["error_category"] == "capability_unknown"
+assert item["error_category"] == "capability_unavailable"
 assert report["handoffs"] == []
 PY
 }
@@ -3438,6 +4513,15 @@ check_cli_grammar_rejects_missing_and_extra_arguments() {
     fi
     [[ "$status" == 2 ]] || return 1
   done
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" \
+    --report "" \
+    "$repo" >/dev/null 2>/dev/null; then
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" == 2 ]] || return 1
 }
 
 check_legacy_path_does_not_require_pyyaml() {
@@ -3675,10 +4759,21 @@ run_test "documentation asserts simple-path preservation" check_documentation_si
 run_test "audit assigns unmatched layer paths to unassigned" check_audit_unmatched_layer_path_is_unassigned
 run_test "documentation rejects unrelated runtime.safety enum text" check_documentation_process_runtime_safety_shape_rejects_unrelated_enum
 run_test "target probe classifier uses the fixed safety registry" check_target_probe_classifier
+run_test "target probe classifier requires exact argv matches" check_target_probe_classifier_requires_exact_argv
 run_test "target probe executes supported read-only commands" check_target_probe_readonly_command
+run_test "target probe enforces command safety boundaries" check_target_probe_command_safety_boundaries
+run_test "target probe enforces target type boundaries" check_target_probe_enforces_target_type_boundaries
+run_test "target probe preserves normal and dry-run classifier parity" check_target_probe_normal_dry_run_classifier_parity
+run_test "target probe enforces MCP runtime safety variants" check_target_probe_mcp_runtime_safety_variants
+run_test "target probe blocks unsupported MCP runtime modes" check_target_probe_blocks_unsupported_mcp_runtime_modes
 run_test "target probe executes the supported MCP initialize request" check_target_probe_mcp_initialize
+run_test "target probe validates the caller-provided MCP fixture path" check_target_probe_validates_mcp_fixture_path
+run_test "target probe executes MCP discovery and safe representative calls" check_target_probe_mcp_protocol_operations
+run_test "target probe reports MCP initialize errors as runtime failures" check_target_probe_rejects_mcp_initialize_error
 run_test "target probe rejects malformed MCP responses" check_target_probe_rejects_malformed_mcp_response
 run_test "target probe blocks temporary fixtures before process start" check_target_probe_blocks_temporary_fixture
+run_test "verification preserves the temporary fixture handoff boundary" check_verification_temporary_fixture_handoff_boundary
+run_test "non-probe Plugin items use only their defined handoff" check_non_probe_plugin_uses_only_defined_handoff
 run_test "target probe rejects internal evidence dirs without mutation" check_target_probe_rejects_internal_evidence_dir_without_mutation
 run_test "verification exposes the enhanced probe workflow" check_verification_exposes_enhanced_workflow
 run_test "dry-run preserves the target and reports snapshots" check_dry_run_preserves_target_and_reports_snapshots
@@ -3686,6 +4781,7 @@ run_test "dry-run classifies safety and blocks process starts" check_dry_run_cla
 run_test "dry-run blocks confirmed audit targets" check_dry_run_blocks_confirmed_audit_targets
 run_test "dry-run Skill handoffs are reference-only" check_dry_run_skill_handoff_is_reference_only
 run_test "normal Skill safety rejection records defined handoff" check_normal_skill_safety_rejection_records_only_defined_handoff
+run_test "Skill discovery and activation never start adapters" check_skill_discovery_and_activation_never_start_adapters
 run_test "dry-run rejects target-internal reports" check_dry_run_rejects_target_internal_report
 run_test "verification detects a Contract marker in README" check_verification_detects_readme_contract_marker
 run_test "verification rejects ambiguous Contract markers" check_verification_rejects_ambiguous_contract_markers
