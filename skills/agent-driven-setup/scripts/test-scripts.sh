@@ -2569,7 +2569,13 @@ check_target_probe_mcp_runtime_safety_variants() {
 #!/bin/sh
 touch "$marker"
 while IFS= read -r request; do
-  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+  case "\$request" in
+    *'"method":"notifications/initialized"'*)
+      ;;
+    *)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+      ;;
+  esac
 done
 SH
   chmod +x "$fake_bin/agent-setup-mcp-stdio-readonly"
@@ -2613,7 +2619,7 @@ PY
       "$repo" >"$normal_result"; then
       return 1
     fi
-    python3 - "$variant" "$normal_result" <<'PY'
+    python3 - "$variant" "$normal_result" <<'PY' || return 1
 import json
 import sys
 from pathlib import Path
@@ -2812,7 +2818,13 @@ check_target_probe_validates_mcp_fixture_path() {
   cat >"$external_fixture" <<'SH'
 #!/bin/sh
 while IFS= read -r request; do
-  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+  case "$request" in
+    *'"method":"notifications/initialized"'*)
+      ;;
+    *)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+      ;;
+  esac
 done
 SH
   chmod +x "$external_fixture"
@@ -2835,7 +2847,7 @@ SH
       "$repo" >"$result"; then
       return 1
     fi
-    python3 - "$result" "$expected_status" "$expected_category" <<'PY'
+    python3 - "$result" "$expected_status" "$expected_category" <<'PY' || return 1
 import json
 import sys
 
