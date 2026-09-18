@@ -165,6 +165,26 @@ verify-setup.sh [--dry-run] [--contract <repo-relative-path>] [--report <target-
 
 The `--report` destination must be outside the target repository.
 
+The public CLI and JSON contract is backward compatible. Without `--report`,
+stdout remains the existing JSON verification plan; retain the `commands`,
+`notes`, and `makefile_targets` keys and add new keys only additively. The
+normal risk category is `safe` or `review`, while a dry-run decision is
+`execute` or `not_executed`; do not mix these vocabularies. Commands default to
+`review`; only a command matching the executor's fixed `safe_prefixes` allowlist
+may be `safe`, and a review keyword takes precedence over a safe-prefix match.
+
+Exit codes are stable: `0` means all required targets are `verified` or
+`not_applicable`; `1` means an unexpected operational failure or
+`dry_run_invariant_violation`; `2` means a usage error or malformed Contract;
+`3` means the enhanced path cannot find the required PyYAML dependency; and
+`4` means an audit, capability, safety, dependency, or target-runtime failure
+left a required target `not_verified`. When possible, emit the Verification
+Report even for exit code `4` and record its `error_category`.
+
+See [references/verification-patterns.md](references/verification-patterns.md)
+for the normative MCP message sequence, E2E status derivation, audit and
+handoff records, and dry-run invariants.
+
 For enhanced repositories, execute the workflow in this order: audit gate -> capability assessment -> dependency-aware probe execution -> report -> handoff.
 The report keeps capability availability and target verification result as separate
 fields. Implementation completion is distinct from verification completion, and
