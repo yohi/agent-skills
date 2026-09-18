@@ -33,8 +33,9 @@ separate, and dry-run/classification must not execute or write to the target.
 
 ## MCP protocol verification
 
-Every MCP stdio session uses JSON-RPC 2.0 over the JSONL stdin/stdout
-protocol. Send an `initialize` request with request ID `1`,
+Every MCP stdio session supported by P1 uses the MCP 2025-06-18 lifecycle and
+JSON-RPC 2.0 over the JSONL stdin/stdout protocol. Send an `initialize` request
+with request ID `1`,
 `protocolVersion: "2025-06-18"`, `capabilities: {}`, and deterministic
 `clientInfo`. Validate the response, including its request ID, before sending
 the outbound-only `notifications/initialized` notification. Do not wait for a
