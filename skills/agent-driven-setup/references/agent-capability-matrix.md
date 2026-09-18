@@ -4,6 +4,10 @@ The generated setup framework must stay vendor-neutral in its common contract.
 Use this matrix only when you need to map a generic capability to a concrete
 tool name in an agent-specific adapter.
 
+Specialized setup capability definitions are maintained separately in
+[`setup-capability-matrix.md`](setup-capability-matrix.md). This document only
+defines the generic capabilities used to route prerequisites.
+
 ## Generic capabilities
 
 | Capability | Meaning |
