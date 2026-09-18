@@ -21,7 +21,7 @@ with `error_category: safety_blocked`. Safety-blocked items are `not_verified`
 with `error_category: safety_blocked`.
 
 P1 uses these probe boundaries: `mcp_runtime_probe` for MCP process startup and
-fixed protocol discovery, `agent_discovery_probe` for Contract-defined
+fixed protocol discovery conforming to the MCP 2025-06-18 lifecycle (sending `initialize` with `protocolVersion: "2025-06-18"`, validating response, and sending outbound-only `notifications/initialized` without expecting a response line), `agent_discovery_probe` for Contract-defined
 discovery, and `representative_activation_probe` for a Contract-defined
 representative read-only operation. Skill `agent_action` discovery/activation,
 MCP `temporary_fixture`, Plugin, Hook, and `other/custom` remain handoffs; no

@@ -12,11 +12,12 @@
 ## このスキルが行うこと
 
 1. 対象リポジトリの既存 setup assets（README、install docs、package metadata、CI、Agent config など）を調査
-2. リポジトリ固有の setup contract を理解し、最適な Agent-driven setup アプローチを選択
-3. Human-facing な README エントリポイントを追加
-4. 必要に応じて Agent setup protocol（主に `AGENTS.md` 内）を追加・追記
-5. 実際の setup path を可能な範囲で検証
-6. 変更内容、再利用した既存 assets、検証結果、未検証事項を報告
+2. 複雑な設定分岐を持つリポジトリに対して機械可読な Setup Contract（YAML frontmatter）と静的監査（`audit-contract.sh`）を提供
+3. リポジトリ固有の setup contract を理解し、最適な Agent-driven setup アプローチを選択
+4. Human-facing な README エントリポイントを追加
+5. 必要に応じて Agent setup protocol（主に `AGENTS.md` 内）を追加・追記
+6. 実際の setup path を安全性ポリシー（Probe Safety Policy v1）および MCP 2025-06-18 ライフサイクルに基づいて厳密に検証（`verify-setup.sh`、`run-target-probes.sh`）
+7. 変更内容、再利用した既存 assets、検証結果、未検証事項を報告
 
 ## このスキルが行わないこと
 
