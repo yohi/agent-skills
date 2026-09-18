@@ -1440,11 +1440,11 @@ for target_id in sorted(verification_targets):
         item_id = item["id"]
         if item_id in visited:
             return
+        visited.add(item_id)
         for dependency in item.get("blocked_by", []):
             dependency_item = item_by_id.get(dependency)
             if dependency_item is not None:
                 visit(dependency_item)
-        visited.add(item_id)
         ordered_items.append(item)
 
     for item in items:

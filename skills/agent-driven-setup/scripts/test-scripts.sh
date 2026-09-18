@@ -3290,6 +3290,41 @@ assert report["overall_status"] == "not_verified"
 PY
 }
 
+check_verification_report_handles_blocked_by_cycles() {
+  local repo="$TEMP_DIR/report-cycle-repo"
+  local report="$TEMP_DIR/report-cycle.md"
+  local result="$TEMP_DIR/report-cycle.json"
+  local status
+  mkdir -p "$repo"
+  write_audit_contract "$repo/contract.md" cycle
+
+  if bash "$SCRIPT_DIR/verify-setup.sh" \
+    --contract contract.md \
+    --report "$report" \
+    "$repo" >"$result"; then
+    return 1
+  else
+    status=$?
+  fi
+  [[ "$status" == "4" ]] || return 1
+
+  python3 - "$result" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["verification_report"]
+errors = report["audit"]["schema_errors"]
+assert any(error["code"] == "blocked_by_cycle" for error in errors)
+target = report["targets"]["cli_main"]
+assert target["audit_blocked"] is True
+assert [item["id"] for item in target["items"]] == ["cli.install", "cli.second"]
+assert all(item["status"] == "not_verified" for item in target["items"])
+assert all(item["error_category"] == "audit_blocked" for item in target["items"])
+assert report["overall_status"] == "not_verified"
+PY
+}
+
 check_verification_rejects_malformed_structure_with_audit_status() {
   local shape mode repo report result status
 
@@ -3669,6 +3704,7 @@ run_test "verification report records runtime failures" check_verification_repor
 run_test "verification report scopes confirmed audit findings" check_verification_report_scopes_confirmed_audit_findings
 run_test "verification report scopes unresolved audit findings" check_verification_report_keeps_unresolved_findings_target_scoped
 run_test "verification report blocks schema errors" check_verification_report_blocks_schema_errors
+run_test "verification report handles blocked-by cycles" check_verification_report_handles_blocked_by_cycles
 run_test "verification rejects malformed structures with audit status" check_verification_rejects_malformed_structure_with_audit_status
 run_test "verification report derives not-applicable status" check_verification_report_marks_no_required_items_not_applicable
 run_test "documentation defines the enhanced probe boundary" check_documentation_enhanced_probe_boundary
