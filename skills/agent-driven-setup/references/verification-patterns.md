@@ -31,6 +31,92 @@ dry-run returns `not_executed`; no Skill `agent_action` is automatically
 executed in P1. target-operation separation is required: target operation and capability assessment are
 separate, and dry-run/classification must not execute or write to the target.
 
+## MCP protocol verification
+
+Every MCP stdio session uses JSON-RPC 2.0 over the JSONL stdin/stdout
+protocol. Send an `initialize` request with request ID `1`,
+`protocolVersion: "2025-06-18"`, `capabilities: {}`, and deterministic
+`clientInfo`. Validate the response, including its request ID, before sending
+the outbound-only `notifications/initialized` notification. Do not wait for a
+notification response or count it as an expected response.
+
+Use `tools/list` with request ID `2` for discovery and `tools/call` with request
+ID `3` for a representative tool call. Apply the applicable sequence to each
+probe mode because each mode starts a new process:
+
+```text
+initialize (id 1) -> initialize response -> notifications/initialized
+  -> tools/list (id 2) -> tools/list response
+  -> tools/call (id 3) -> tools/call response
+```
+
+The standalone initialize probe stops after the notification, and the
+standalone discovery probe stops after `tools/list`. Wait only for
+response-bearing requests, match every response ID to its originating request,
+and derive the expected response count from those requests. A missing response,
+malformed JSON, JSON-RPC error, timeout, process failure, or response-count
+mismatch is a runtime failure; a successfully written notification creates no
+response requirement. Fixtures and assertions must verify the initialize
+parameters, notification ordering, distinct request IDs, response-ID matching,
+notification non-response behavior, and all three probe modes.
+
+## Verification and audit status
+
+Each verification item reports exactly one of `verified`, `not_verified`, or
+`not_applicable`. Items declare `required_for_e2e: true` or `false`. Derive each
+target's E2E status as follows:
+
+- `not_applicable`: no required item remains that is not `not_applicable`.
+- `verified`: every required, applicable item is `verified`.
+- `not_verified`: any other result.
+
+When `blocked_by` references an item that is not verified, do not start the
+dependent probe. Record the dependent item as `not_verified` with
+`reason: blocked_by_unverified_dependency` and
+`error_category: dependency_blocked`. This value is recorded by the
+orchestrator, not returned by the probe process. A blocked required item makes
+the target E2E status `not_verified`; a blocked non-required item does not
+change the target E2E status.
+
+Audit findings use `finding_state: confirmed | candidate | unresolved` and must
+include `affected_target_ids`. A `confirmed` finding blocks the affected
+target's probes with `audit_blocked`. An unresolved finding affecting a target
+prevents E2E sign-off until it is resolved or explicitly reviewed. Findings
+must remain associated with their affected targets; unrelated targets are not
+blocked.
+
+Handoffs are defined in the Setup Contract and recorded separately in the
+Verification Report. A definition includes `handoff_id`, `actor`, `action`,
+`prerequisites`, `expected_outcome`, and `required_evidence`. An execution
+record includes the `handoff_id`, verification item, actor, status
+(`pending | completed | failed`), evidence references, and evaluation result
+(`pending | success | failure | needs_review`). Evaluate handoffs in this
+order:
+
+```text
+handoff completed -> evidence acquired -> required evidence evaluated
+  -> evaluation result -> verification item status
+```
+
+Keep evidence as a type, summary, or external reference. Do not embed secret or
+credential-bearing content in Contract frontmatter or reports.
+
+## Dry-run invariants
+
+Dry-run and classification must not write to the target repository, including
+its `.agent-setup/` cache. Store analysis caches, snapshots, probe evidence, and
+temporary fixtures only in a target-external temporary directory. Capture the
+before snapshot after read-only Contract discovery and before any target write;
+the declared snapshot surfaces and the target working tree must be unchanged at
+the end. A `--report` output path must also be outside the target repository.
+
+Dry-run must suppress temporary-fixture creation, MCP runtime startup,
+mutating operations, and unknown operations before process start. It must not
+install missing dependencies into the target, user-local environment, or a
+production environment. Failure to clean temporary storage or to verify the
+read-only snapshot is a `dry_run_invariant_violation` and fails the dry-run with
+exit code `1`; it is not a successful `not_executed` result.
+
 ## Preferred verification order
 
 1. **Repository-defined test / build / lint commands**
