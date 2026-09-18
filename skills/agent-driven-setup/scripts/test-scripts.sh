@@ -2722,6 +2722,7 @@ check_target_probe_mcp_initialize() {
   local path_bin="$TEMP_DIR/probe-mcp-path-bin"
   local trusted_marker="$TEMP_DIR/probe-mcp-trusted"
   local path_marker="$TEMP_DIR/probe-mcp-path"
+  local request_log="$TEMP_DIR/probe-mcp-initialize-requests.jsonl"
   local result="$TEMP_DIR/probe-mcp-result.json"
   mkdir -p "$repo" "$evidence" "$fake_bin" "$path_bin"
   write_audit_contract "$repo/contract.md" mcp-initialize
@@ -2729,7 +2730,14 @@ check_target_probe_mcp_initialize() {
 #!/bin/sh
 touch "$trusted_marker"
 while IFS= read -r request; do
-  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+  printf '%s\n' "\$request" >> "$request_log"
+  case "\$request" in
+    *'"method":"notifications/initialized"'*)
+      ;;
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"fixture","version":"1.0.0"}}}'
+      ;;
+  esac
 done
 SH
   cat >"$path_bin/agent-setup-mcp-stdio-readonly" <<SH
@@ -2761,6 +2769,30 @@ assert data["error_category"] is None
 PY
   [[ -e "$trusted_marker" ]]
   [[ ! -e "$path_marker" ]]
+  python3 - "$request_log" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+requests = [
+    json.loads(line)
+    for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+]
+assert [request["method"] for request in requests] == [
+    "initialize",
+    "notifications/initialized",
+]
+assert requests[0]["id"] == 1
+assert requests[0]["params"] == {
+    "protocolVersion": "2025-06-18",
+    "capabilities": {},
+    "clientInfo": {
+        "name": "agent-driven-setup-probe",
+        "version": "1.0.0",
+    },
+}
+assert "id" not in requests[1]
+PY
 }
 
 check_target_probe_validates_mcp_fixture_path() {
@@ -2830,14 +2862,16 @@ check_target_probe_mcp_protocol_operations() {
 while IFS= read -r request; do
   printf '%s\n' "\$request" >> "$request_log"
   case "\$request" in
+    *'"method":"notifications/initialized"'*)
+      ;;
     *'"method":"initialize"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}'
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"fixture","version":"1.0.0"}}}'
       ;;
     *'"method":"tools/list"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}'
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}'
       ;;
     *'"method":"tools/call"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"fixture"}]}}'
+      printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"fixture"}]}}'
       ;;
   esac
 done
@@ -2870,18 +2904,44 @@ requests = [
     for line in Path(sys.argv[3]).read_text(encoding="utf-8").splitlines()
 ]
 if variant == "mcp-tool-discovery":
-    assert len(requests) == 1
-    assert requests[0]["method"] == "tools/list"
-    assert requests[0]["params"] == {}
+    assert [request["method"] for request in requests] == [
+        "initialize",
+        "notifications/initialized",
+        "tools/list",
+    ]
+    assert requests[0]["id"] == 1
+    assert requests[0]["params"] == {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {
+            "name": "agent-driven-setup-probe",
+            "version": "1.0.0",
+        },
+    }
+    assert "id" not in requests[1]
+    assert requests[2]["id"] == 2
+    assert requests[2]["params"] == {}
 else:
     assert [request["method"] for request in requests] == [
         "initialize",
+        "notifications/initialized",
         "tools/list",
         "tools/call",
     ]
-    assert requests[0]["params"] == {}
-    assert requests[1]["params"] == {}
-    assert requests[2]["params"] == {
+    assert requests[0]["id"] == 1
+    assert requests[0]["params"] == {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {
+            "name": "agent-driven-setup-probe",
+            "version": "1.0.0",
+        },
+    }
+    assert "id" not in requests[1]
+    assert requests[2]["id"] == 2
+    assert requests[2]["params"] == {}
+    assert requests[3]["id"] == 3
+    assert requests[3]["params"] == {
         "name": "read_fixture",
         "arguments": {"name": "test"},
     }

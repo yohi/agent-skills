@@ -375,23 +375,57 @@ if kind == "mcp_request":
         emit("not_verified", "MCP fixture must be outside the target repository", "safety_blocked")
     launch_argv = [str(fixture_path), *argv[1:]]
 
+    def request_message(request_id, method, params):
+        return {
+            "message": {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method,
+                "params": params,
+            },
+            "expects_response": True,
+        }
+
+    initialized_notification = {
+        "message": {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+        },
+        "expects_response": False,
+    }
+    initialize = request_message(
+        1,
+        "initialize",
+        {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "agent-driven-setup-probe",
+                "version": "1.0.0",
+            },
+        },
+    )
     if request == "initialize":
-        messages = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}]
+        messages = [initialize, initialized_notification]
     elif request == "tool_discovery":
-        messages = [{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}]
+        messages = [
+            initialize,
+            initialized_notification,
+            request_message(2, "tools/list", {}),
+        ]
     elif request == "representative_tool_call":
         messages = [
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
-            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {
+            initialize,
+            initialized_notification,
+            request_message(2, "tools/list", {}),
+            request_message(
+                3,
+                "tools/call",
+                {
                     "name": probe.get("tool"),
                     "arguments": probe.get("arguments", {}),
                 },
-            },
+            ),
         ]
     else:
         emit("not_verified", "MCP request is unsupported", "audit_blocked")
@@ -441,9 +475,12 @@ if kind == "mcp_request":
             bufsize=1,
         )
         deadline = time.monotonic() + 30
-        for message in messages:
+        for message_entry in messages:
+            message = message_entry["message"]
             process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
             process.stdin.flush()
+            if not message_entry["expects_response"]:
+                continue
             line = read_response(process, deadline)
             response_lines.append(line)
             try:
@@ -480,7 +517,9 @@ if kind == "mcp_request":
     stdout_tail, stderr, returncode = finalize_process(process)
     stdout = "".join(response_lines) + stdout_tail
     all_response_lines = [line for line in stdout.splitlines() if line.strip()]
-    expected_count = len(messages)
+    expected_count = sum(
+        1 for message_entry in messages if message_entry["expects_response"]
+    )
     valid_responses = valid_responses and len(all_response_lines) == expected_count
     record = summarize_output(stdout.encode(), stderr.encode(), returncode)
     record["responses_observed"] = len(all_response_lines)
