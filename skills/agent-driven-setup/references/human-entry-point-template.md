@@ -64,6 +64,11 @@ source was selected; use the standalone protocol file path or raw URL when
 If the repository has separate user install and developer setup tracks,
 customize each prompt with its own canonical source.
 
+For P1 targets, the Agent may discover an `agent_action` but does not execute
+Skill discovery or activation automatically. `safety_blocked` means the target
+was not verified; a dry-run adapter is `not_executed`. Only a Contract-defined
+handoff is offered to the user.
+
 If the user supplied a canary or marker value to include in the prompt, place it
 inside the prompt block only. Do not copy that value into `AGENTS.md`, the final
 report, `summary.json`, or `transcript.md`.

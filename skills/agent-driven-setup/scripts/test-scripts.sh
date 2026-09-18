@@ -4698,6 +4698,30 @@ check_documentation_simple_path_preserved() {
   grep -q 'verify-setup.sh' "$SKILL_DIR/SKILL.md" || return 1
 }
 
+check_documentation_verification_workflow_contract() {
+  python3 - "$SKILL_DIR/SKILL.md" "$SKILL_DIR/references/agent-protocol-template.md" "$SKILL_DIR/references/human-entry-point-template.md" <<'PY'
+from pathlib import Path
+import sys
+
+skill, protocol, entry = [Path(path).read_text(encoding="utf-8") for path in sys.argv[1:]]
+assert "audit gate -> capability assessment -> dependency-aware probe execution -> report -> handoff" in skill
+assert "capability availability" in skill and "target verification result" in skill
+assert "implementation completion is distinct from verification completion" in skill.lower()
+assert "unresolved affected audit findings prevent E2E sign-off" in skill
+assert protocol.count("The protocol emits only Contract-defined handoffs from the repository's Setup Contract v1;") == 1
+assert "verification report" in protocol
+assert protocol.count("Setup Contract v1") == 1
+assert "Setup Contract v1" not in entry
+assert "agent_action" in entry and "P1" in entry
+assert "safety_blocked" in entry and "not_executed" in entry
+PY
+}
+
+check_documentation_verify_setup_cli_and_report_destination() {
+  grep -qF -- 'verify-setup.sh [--dry-run] [--contract <repo-relative-path>] [--report <target-external-markdown-path>] <repo-path>' "$SKILL_DIR/SKILL.md" || return 1
+  grep -qF -- 'The `--report` destination must be outside the target repository.' "$SKILL_DIR/SKILL.md" || return 1
+}
+
 run_test "eval manifest parses" check_eval_manifest
 run_test "analysis detects nested scripts and lockfiles" check_analysis
 run_test "analysis uses package runner for npm tests" check_analysis_uses_package_runner_for_tests
@@ -4756,6 +4780,7 @@ run_test "documentation asserts P1 Skill discovery/activation handoff" check_doc
 run_test "documentation asserts P1 temporary_fixture handoff" check_documentation_p1_temporary_fixture_handoff
 run_test "documentation asserts safety declaration is not execution authority" check_documentation_safety_declaration_not_execution_authority
 run_test "documentation asserts simple-path preservation" check_documentation_simple_path_preserved
+run_test "documentation defines the verification workflow contract" check_documentation_verification_workflow_contract
 run_test "audit assigns unmatched layer paths to unassigned" check_audit_unmatched_layer_path_is_unassigned
 run_test "documentation rejects unrelated runtime.safety enum text" check_documentation_process_runtime_safety_shape_rejects_unrelated_enum
 run_test "target probe classifier uses the fixed safety registry" check_target_probe_classifier
@@ -4805,6 +4830,7 @@ run_test "verification rejects malformed structures with audit status" check_ver
 run_test "verification report derives not-applicable status" check_verification_report_marks_no_required_items_not_applicable
 run_test "documentation defines the enhanced probe boundary" check_documentation_enhanced_probe_boundary
 run_test "documentation publishes capability and verification references" check_documentation_capability_references
+run_test "documentation fixes verify-setup CLI and external report destination" check_documentation_verify_setup_cli_and_report_destination
 
 if (( failures > 0 )); then
   exit 1

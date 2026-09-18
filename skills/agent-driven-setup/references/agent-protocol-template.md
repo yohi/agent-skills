@@ -20,6 +20,10 @@ in the target repository. Merge it non-destructively into the existing
 4. **Secret policy**: how to handle `API_KEY`, `.env`, and other credentials.
 5. **Verification steps**: how to confirm the setup worked.
 
+The protocol emits only Contract-defined handoffs from the repository's Setup Contract v1;
+the Agent must not construct an undefined handoff. The verification report records
+capability availability separately from the target verification result.
+
 ## Minimal protocol section
 
 ```markdown
@@ -41,6 +45,7 @@ When setup is requested:
    any required secret. Never request or print secret values in normal chat.
 5. Verify setup by running the repository-defined test command. If a step
    fails, report the non-secret output and next safe action.
+6. Record the verification report, including verified and not-verified items.
 
 Do not commit, push, or open a pull request unless the user explicitly asks.
 ```
