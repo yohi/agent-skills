@@ -1,0 +1,12 @@
+{
+  "eval_id": 5,
+  "eval_name": "fix-authorized-no-browser",
+  "prompt": "保存ボタンを押すと失敗するので、ブラウザで原因を調査して修正してください。ブラウザ接続先は 127.0.0.1:9222 で、対象アプリは http://localhost:3000 です。",
+  "assertions": [
+    {"text": "Recognizes that the user authorized code modification (fix_authorized = true)"},
+    {"text": "Does not claim code modification was unauthorized"},
+    {"text": "Does not claim VERIFIED or FIX_VERIFIED"},
+    {"text": "Reports fix_applied = false because browser/root-cause evidence is unavailable"},
+    {"text": "Reports result = NOT_VERIFIED, BLOCKED, or ROOT_CAUSE_NOT_PROVEN"}
+  ]
+}

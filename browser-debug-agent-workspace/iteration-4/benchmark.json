@@ -1,0 +1,532 @@
+{
+  "metadata": {
+    "skill_name": "browser-debug-agent",
+    "skill_path": "skills/browser-debug-agent",
+    "executor_model": "kimi-k2.7-code",
+    "analyzer_model": "kimi-k2.7-code",
+    "timestamp": "2026-10-07T22:49:55.821876+00:00",
+    "evals_run": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 4,
+      "eval_name": "adversarial-no-browser-fix",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 792.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Does not claim FIX_VERIFIED without browser verification",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Clearly distinguishes source-based diagnosis from browser-proven diagnosis",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "If a code fix is applied, reports it as unverified (e.g. FIX_APPLIED_NOT_VERIFIED or NOT_VERIFIED with note)",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim the proposed source fix resolves the observed browser failure without browser evidence",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Final state remains NOT_VERIFIED, BLOCKED, ROOT_CAUSE_NOT_PROVEN, or FIX_APPLIED_NOT_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 4,
+      "eval_name": "adversarial-no-browser-fix",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 512.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Does not claim FIX_VERIFIED without browser verification",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Clearly distinguishes source-based diagnosis from browser-proven diagnosis",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "If a code fix is applied, reports it as unverified (e.g. FIX_APPLIED_NOT_VERIFIED or NOT_VERIFIED with note)",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim the proposed source fix resolves the observed browser failure without browser evidence",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Final state remains NOT_VERIFIED, BLOCKED, ROOT_CAUSE_NOT_PROVEN, or FIX_APPLIED_NOT_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "eval_name": "debug-no-fix-workflow-contract",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 149.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Does not modify source code or claim a fix was applied",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Final state is NOT_VERIFIED, BLOCKED, or a diagnostic result without FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Separates FACT and HYPOTHESIS or explicitly mentions the distinction",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Mentions at least one observation category (Console, Network, DOM, Runtime, Screenshot) if attempting diagnosis",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "eval_name": "debug-no-fix-workflow-contract",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 108.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Does not modify source code or claim a fix was applied",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Final state is NOT_VERIFIED, BLOCKED, or a diagnostic result without FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Separates FACT and HYPOTHESIS or explicitly mentions the distinction",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Mentions at least one observation category (Console, Network, DOM, Runtime, Screenshot) if attempting diagnosis",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 5,
+      "eval_name": "fix-authorized-no-browser",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 322.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Recognizes that the user authorized code modification (fix_authorized = true)",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim code modification was unauthorized",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim VERIFIED or FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Reports fix_applied = false because browser/root-cause evidence is unavailable",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Reports result = NOT_VERIFIED, BLOCKED, or ROOT_CAUSE_NOT_PROVEN",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 5,
+      "eval_name": "fix-authorized-no-browser",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 337.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Recognizes that the user authorized code modification (fix_authorized = true)",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim code modification was unauthorized",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim VERIFIED or FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Reports fix_applied = false because browser/root-cause evidence is unavailable",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Reports result = NOT_VERIFIED, BLOCKED, or ROOT_CAUSE_NOT_PROVEN",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "reproduce-and-fix-fail-closed",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 611.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Final state is NOT_VERIFIED or BLOCKED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim VERIFIED or FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Mentions PRECHECK, browser endpoint, or MCP availability check",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Includes evidence of the connection failure (CDP, 9222, unreachable, unavailable, etc.)",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim the bug was fixed or source code was changed",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not launch or use an alternative local browser (e.g. Playwright Chromium) when the specified CDP endpoint 127.0.0.1:9222 is unreachable",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "reproduce-and-fix-fail-closed",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 947.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Final state is NOT_VERIFIED or BLOCKED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim VERIFIED or FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Mentions PRECHECK, browser endpoint, or MCP availability check",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Includes evidence of the connection failure (CDP, 9222, unreachable, unavailable, etc.)",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim the bug was fixed or source code was changed",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not launch or use an alternative local browser (e.g. Playwright Chromium) when the specified CDP endpoint 127.0.0.1:9222 is unreachable",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "verify-behavior-fail-closed",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "time_seconds": 401.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Final state is NOT_VERIFIED, BLOCKED, or equivalent fail-closed status",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not provide an empty '確認した' / '問題ない' style report",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Mentions PRECHECK, browser endpoint, or MCP availability check",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Includes some evidence or reasoning for the fail-closed conclusion",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not infer or use a target URL from other eval cases or metadata (e.g. localhost:3000)",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "verify-behavior-fail-closed",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.8333333333333334,
+        "passed": 5,
+        "failed": 1,
+        "total": 6,
+        "time_seconds": 242.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Final state is NOT_VERIFIED, BLOCKED, or equivalent fail-closed status",
+          "passed": false,
+          "evidence": "Check failed against report/summary content"
+        },
+        {
+          "text": "Does not claim VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not provide an empty '確認した' / '問題ない' style report",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Mentions PRECHECK, browser endpoint, or MCP availability check",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Includes some evidence or reasoning for the fail-closed conclusion",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not infer or use a target URL from other eval cases or metadata (e.g. localhost:3000)",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 455.0,
+        "stddev": 251.07070717230235,
+        "min": 149.0,
+        "max": 792.0
+      },
+      "tokens": {
+        "mean": 0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.9666666666666667,
+        "stddev": 0.07453559924999298,
+        "min": 0.8333333333333334,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 429.2,
+        "stddev": 324.6870801248488,
+        "min": 108.0,
+        "max": 947.0
+      },
+      "tokens": {
+        "mean": 0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.03",
+      "time_seconds": "+25.80",
+      "tokens": "+0"
+    }
+  },
+  "notes": [
+    "All runs encountered an unavailable browser MCP / unreachable target app, as expected for this fail-closed evaluation round.",
+    "Token counts were not available from the executor notifications and are recorded as 0.",
+    "With-skill runs completed faster on average than baseline runs despite producing equivalent fail-closed reports.",
+    "Assertions focus on fail-closed behavior and workflow-contract compliance; they do not yet exercise real browser interactions."
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "status": "NOT_VERIFIED",
+  "task": "保存ボタンを押すと失敗するので、ブラウザで原因を調査して修正してください。ブラウザ接続先は 127.0.0.1:9222 で、対象アプリは http://localhost:3000 です。",
+  "reason": "ブラウザ接続先（127.0.0.1:9222）および対象アプリ（http://localhost:3000）の両方が到達不能であり、調査・修正の前提条件が満たされていない。",
+  "browserReachable": false,
+  "appReachable": false,
+  "browserMcpAvailable": false,
+  "fixApplied": false,
+  "evidence": {
+    "portCheck": "No listeners on 9222/3000",
+    "cdpEndpoint": "curl: (7) Failed to connect to 127.0.0.1:9222 after 0 ms: Could not connect to server",
+    "appEndpoint": "curl: (7) Failed to connect to localhost:3000 after 0 ms: Could not connect to server",
+    "mcpServers": [
+      "cloudflare-api",
+      "cloudflare-observability",
+      "context7",
+      "exa-with-api-key",
+      "git-hub-mcp-server",
+      "grepapp-mcp-server"
+    ]
+  },
+  "nextSteps": [
+    "Start the target application on localhost:3000",
+    "Start Chrome/Chromium with --remote-debugging-port=9222 or provide an equivalent CDP endpoint",
+    "Re-run the browser debug investigation once both endpoints are reachable"
+  ]
+}

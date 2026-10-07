@@ -1,0 +1,88 @@
+{
+  "result": "NOT_VERIFIED",
+  "skill": "browser-debug-agent",
+  "userRequest": "ログイン後に画面が真っ白になる問題をブラウザでデバッグしてください。コード修正はまだ許可しません。",
+  "fixAuthorized": false,
+  "fixApplied": false,
+  "fixVerified": false,
+  "rootCauseProven": false,
+  "precheck": {
+    "browserEndpointReachable": false,
+    "targetUrlKnown": false,
+    "targetAppReachable": null,
+    "browserSessionAvailable": false,
+    "browserMcpAvailable": false,
+    "status": "FAILED"
+  },
+  "evidence": {
+    "cdpEndpoint": "http://127.0.0.1:9222/json/version",
+    "cdpReachable": false,
+    "cdpCheckCommand": "curl --silent --show-error --max-time 3 http://127.0.0.1:9222/json/version",
+    "cdpCheckResult": "curl: (7) Failed to connect to 127.0.0.1:9222 after 0 ms: Could not connect to server",
+    "browserProcessCheckCommand": "pgrep -af '(^|/)(google-chrome|chrome|chromium|chromium-browser)( |$)'",
+    "browserProcessDetected": false,
+    "browserMcpToolsFound": [],
+    "targetUrlProvided": false
+  },
+  "observationLedger": {
+    "console": {
+      "status": "NOT_COLLECTED",
+      "reason": "Browser endpoint unreachable; no Chrome DevTools MCP available"
+    },
+    "network": {
+      "status": "NOT_COLLECTED",
+      "reason": "Browser endpoint unreachable; no Chrome DevTools MCP available"
+    },
+    "dom": {
+      "status": "NOT_COLLECTED",
+      "reason": "No accessible browser page/session"
+    },
+    "runtime": {
+      "status": "NOT_COLLECTED",
+      "reason": "No accessible browser page/session"
+    },
+    "screenshot": {
+      "status": "NOT_COLLECTED",
+      "reason": "No accessible browser session or screenshot capability"
+    }
+  },
+  "reproduction": {
+    "performed": false,
+    "status": "NOT_VERIFIED",
+    "expected": "ログイン後にアプリケーションの画面が正常に表示される",
+    "actual": "PRECHECK failed: CDP endpoint unreachable, browser MCP unavailable, and target URL not provided; login flow was not attempted"
+  },
+  "diagnosis": {
+    "rootCause": "ROOT_CAUSE_NOT_PROVEN",
+    "facts": [
+      "Connection to http://127.0.0.1:9222/json/version failed with curl error 7 (could not connect)",
+      "No Chrome DevTools or Playwright browser MCP tool was available in the tool catalog",
+      "The target application URL was not provided",
+      "Console, Network, DOM, Runtime, and Screenshot were all NOT_COLLECTED"
+    ],
+    "hypotheses": [
+      "An authentication redirect or route transition issue may be involved",
+      "A JavaScript runtime error may be involved",
+      "An API response or rendering issue may be involved"
+    ]
+  },
+  "fix": {
+    "performed": false,
+    "sourceModified": false,
+    "reason": "User explicitly denied authorization for code changes"
+  },
+  "verification": {
+    "performed": false,
+    "result": "NOT_VERIFIED",
+    "reason": "Browser endpoint and browser MCP unavailable; reproduction could not be performed"
+  },
+  "regression": {
+    "performed": false,
+    "reason": "Skipped per Browser Debug Agent v1 scope"
+  },
+  "remainingRisks": [
+    "The reported blank-screen behavior could not be observed or reproduced",
+    "The root cause remains unproven because all browser observation categories are NOT_COLLECTED",
+    "A reachable dedicated browser session and the target application URL are needed to continue"
+  ]
+}

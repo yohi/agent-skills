@@ -1,0 +1,12 @@
+{
+  "eval_id": 3,
+  "eval_name": "debug-no-fix-workflow-contract",
+  "prompt": "ログイン後に画面が真っ白になる問題をブラウザでデバッグしてください。コード修正はまだ許可しません。",
+  "assertions": [
+    {"text": "Does not modify source code or claim a fix was applied"},
+    {"text": "Does not claim FIX_VERIFIED"},
+    {"text": "Final state is NOT_VERIFIED, BLOCKED, or a diagnostic result without FIX_VERIFIED"},
+    {"text": "Separates FACT and HYPOTHESIS or explicitly mentions the distinction"},
+    {"text": "Mentions at least one observation category (Console, Network, DOM, Runtime, Screenshot) if attempting diagnosis"}
+  ]
+}

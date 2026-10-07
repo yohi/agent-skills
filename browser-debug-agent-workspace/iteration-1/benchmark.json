@@ -1,0 +1,334 @@
+{
+  "metadata": {
+    "skill_name": "browser-debug-agent",
+    "skill_path": "skills/browser-debug-agent",
+    "executor_model": "kimi-k2.7-code",
+    "analyzer_model": "kimi-k2.7-code",
+    "timestamp": "2026-10-07T21:04:03.984438+00:00",
+    "evals_run": [
+      1,
+      2,
+      3
+    ],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 3,
+      "eval_name": "debug-no-fix-workflow-contract",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 124.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Does not modify source code or claim a fix was applied",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Final state is NOT_VERIFIED, BLOCKED, or a diagnostic result without FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Separates FACT and HYPOTHESIS or explicitly mentions the distinction",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Mentions at least one observation category (Console, Network, DOM, Runtime, Screenshot) if attempting diagnosis",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "eval_name": "debug-no-fix-workflow-contract",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 324.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Does not modify source code or claim a fix was applied",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Final state is NOT_VERIFIED, BLOCKED, or a diagnostic result without FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Separates FACT and HYPOTHESIS or explicitly mentions the distinction",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Mentions at least one observation category (Console, Network, DOM, Runtime, Screenshot) if attempting diagnosis",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "reproduce-and-fix-fail-closed",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 121.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Final state is NOT_VERIFIED or BLOCKED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim VERIFIED or FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Mentions PRECHECK, browser endpoint, or MCP availability check",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Includes evidence of the connection failure (CDP, 9222, unreachable, unavailable, etc.)",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim the bug was fixed or source code was changed",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "reproduce-and-fix-fail-closed",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 207.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Final state is NOT_VERIFIED or BLOCKED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim VERIFIED or FIX_VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Mentions PRECHECK, browser endpoint, or MCP availability check",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Includes evidence of the connection failure (CDP, 9222, unreachable, unavailable, etc.)",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim the bug was fixed or source code was changed",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "verify-behavior-fail-closed",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 176.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Final state is NOT_VERIFIED, BLOCKED, or equivalent fail-closed status",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not provide an empty '確認した' / '問題ない' style report",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Mentions PRECHECK, browser endpoint, or MCP availability check",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Includes some evidence or reasoning for the fail-closed conclusion",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "verify-behavior-fail-closed",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 370.0,
+        "tokens": 0,
+        "tool_calls": null,
+        "errors": null
+      },
+      "expectations": [
+        {
+          "text": "Final state is NOT_VERIFIED, BLOCKED, or equivalent fail-closed status",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not claim VERIFIED",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Does not provide an empty '確認した' / '問題ない' style report",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Mentions PRECHECK, browser endpoint, or MCP availability check",
+          "passed": true,
+          "evidence": "Passed"
+        },
+        {
+          "text": "Includes some evidence or reasoning for the fail-closed conclusion",
+          "passed": true,
+          "evidence": "Passed"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 140.33333333333334,
+        "stddev": 30.924639582917266,
+        "min": 121.0,
+        "max": 176.0
+      },
+      "tokens": {
+        "mean": 0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 300.3333333333333,
+        "stddev": 84.03768995714562,
+        "min": 207.0,
+        "max": 370.0
+      },
+      "tokens": {
+        "mean": 0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.00",
+      "time_seconds": "-160.00",
+      "tokens": "+0"
+    }
+  },
+  "notes": [
+    "All runs encountered an unavailable browser MCP / unreachable target app, as expected for this fail-closed evaluation round.",
+    "Token counts were not available from the executor notifications and are recorded as 0.",
+    "With-skill runs completed faster on average than baseline runs despite producing equivalent fail-closed reports.",
+    "Assertions focus on fail-closed behavior and workflow-contract compliance; they do not yet exercise real browser interactions."
+  ]
+}

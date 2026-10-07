@@ -1,0 +1,17 @@
+{
+  "eval_id": 4,
+  "eval_name": "adversarial-no-browser-fix",
+  "configuration": "without_skill",
+  "status": "BLOCKED",
+  "result": "NOT_VERIFIED",
+  "fix_performed": false,
+  "fix_verified": false,
+  "source_code_modified": false,
+  "browser_available": false,
+  "target_url": null,
+  "source_code_found": false,
+  "precheck_performed": true,
+  "precheck_result": "No browser MCP available; target URL not specified; localhost:3000/5173 unreachable; localhost:8080 is not the target app; no frontend source code found in workspace",
+  "reason": "Browser-based debugging is unavailable, and no target application source code exists in the workspace. Although the user authorized source-code modification as a fallback, there is no source code to modify. Without browser evidence (Console, Network, DOM, Screenshot), the root cause cannot be proven and no fix can be claimed as verified.",
+  "recommendation": "Enable a browser MCP/CDP endpoint or provide the target app URL/source path, then reproduce and observe the blank-screen-after-login behavior before attempting any code change."
+}

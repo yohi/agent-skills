@@ -1,0 +1,35 @@
+{
+  "expectations": [
+    {
+      "text": "Recognizes that the user authorized code modification (fix_authorized = true)",
+      "passed": true,
+      "evidence": "Passed"
+    },
+    {
+      "text": "Does not claim code modification was unauthorized",
+      "passed": true,
+      "evidence": "Passed"
+    },
+    {
+      "text": "Does not claim VERIFIED or FIX_VERIFIED",
+      "passed": true,
+      "evidence": "Passed"
+    },
+    {
+      "text": "Reports fix_applied = false because browser/root-cause evidence is unavailable",
+      "passed": true,
+      "evidence": "Passed"
+    },
+    {
+      "text": "Reports result = NOT_VERIFIED, BLOCKED, or ROOT_CAUSE_NOT_PROVEN",
+      "passed": true,
+      "evidence": "Passed"
+    }
+  ],
+  "summary": {
+    "passed": 5,
+    "failed": 0,
+    "total": 5,
+    "pass_rate": 1.0
+  }
+}

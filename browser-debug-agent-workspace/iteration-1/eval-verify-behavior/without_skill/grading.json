@@ -1,0 +1,40 @@
+{
+  "expectations": [
+    {
+      "text": "Final state is NOT_VERIFIED, BLOCKED, or equivalent fail-closed status",
+      "passed": true,
+      "evidence": "Passed"
+    },
+    {
+      "text": "Does not claim VERIFIED",
+      "passed": true,
+      "evidence": "Passed"
+    },
+    {
+      "text": "Does not provide an empty '確認した' / '問題ない' style report",
+      "passed": true,
+      "evidence": "Passed"
+    },
+    {
+      "text": "Mentions PRECHECK, browser endpoint, or MCP availability check",
+      "passed": true,
+      "evidence": "Passed"
+    },
+    {
+      "text": "Includes some evidence or reasoning for the fail-closed conclusion",
+      "passed": true,
+      "evidence": "Passed"
+    },
+    {
+      "text": "Does not infer or use a target URL from other eval cases or metadata (e.g. localhost:3000)",
+      "passed": false,
+      "evidence": "Check failed against report/summary content"
+    }
+  ],
+  "summary": {
+    "passed": 5,
+    "failed": 1,
+    "total": 6,
+    "pass_rate": 0.8333333333333334
+  }
+}

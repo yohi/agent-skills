@@ -1,0 +1,69 @@
+{
+  "skill_name": "browser-debug-agent",
+  "integration_evals": [
+    {
+      "id": "int-A-save-failure",
+      "name": "save-failure",
+      "prompt": "保存ボタンを押すと失敗するようです。 http://127.0.0.1:3000/settings.html でブラウザを使って原因を調査し、修正してください。ブラウザ接続先は http://127.0.0.1:9222 です。",
+      "expected_flow": [
+        "PRECHECK: real Chrome reachable at http://127.0.0.1:9222, app reachable at http://127.0.0.1:3000",
+        "REPRODUCE: open /settings.html, click Save button",
+        "OBSERVE: Network tab shows POST /api/settings returning 500",
+        "DIAGNOSE: root cause is backend returning 500 on save",
+        "FIX: edit buggy-app/server.js or bug-config.json to make /api/settings return 200",
+        "VERIFY: reload /settings.html, click Save again, confirm success",
+        "REPORT: FIX_VERIFIED with evidence"
+      ],
+      "expectations": [
+        "PRECHECK confirms browser and app reachable",
+        "Reproduces save failure by clicking Save button",
+        "Observes Network failure (POST /api/settings 500)",
+        "Identifies backend as root cause",
+        "Applies a minimal source fix",
+        "Re-runs the same scenario in browser and confirms success",
+        "Reports FIX_VERIFIED only after browser re-verification"
+      ]
+    },
+    {
+      "id": "int-B-post-login-blank",
+      "name": "post-login-blank",
+      "prompt": "ログイン後にダッシュボードが真っ白になります。 http://127.0.0.1:3000/login.html でブラウザを使って原因を調査し、修正してください。ブラウザ接続先は http://127.0.0.1:9222 です。",
+      "expected_flow": [
+        "PRECHECK: real Chrome reachable, app reachable",
+        "REPRODUCE: login and navigate to dashboard, observe blank screen",
+        "OBSERVE: Console shows JavaScript exception, DOM is empty/missing content",
+        "DIAGNOSE: root cause is renderDashboard throwing because authState is undefined",
+        "FIX: edit buggy-app/public/app.js to handle auth state correctly",
+        "VERIFY: reload login flow, dashboard renders correctly",
+        "REPORT: FIX_VERIFIED with evidence"
+      ],
+      "expectations": [
+        "PRECHECK confirms browser and app reachable",
+        "Reproduces login → blank dashboard flow",
+        "Observes Console exception and empty DOM",
+        "Identifies frontend runtime error as root cause",
+        "Applies a minimal source fix",
+        "Re-runs the same scenario in browser and confirms dashboard renders",
+        "Reports FIX_VERIFIED only after browser re-verification"
+      ]
+    },
+    {
+      "id": "int-C-cdp-down",
+      "name": "cdp-unavailable-fail-closed",
+      "prompt": "保存ボタンを押すと失敗するようです。 http://127.0.0.1:3000/settings.html でブラウザを使って調査・修正してください。ただし、CDP tunnel は意図的に落とされています。",
+      "expected_flow": [
+        "PRECHECK: browser endpoint http://127.0.0.1:9222 unreachable",
+        "Stop and report NOT_VERIFIED or BLOCKED with connection failure evidence",
+        "Do not attempt to fix source code without browser evidence",
+        "Do not report FIX_VERIFIED or VERIFIED"
+      ],
+      "expectations": [
+        "PRECHECK detects browser endpoint is unreachable",
+        "Reports NOT_VERIFIED or BLOCKED",
+        "Includes connection failure evidence",
+        "Does not claim VERIFIED or FIX_VERIFIED",
+        "Does not apply source code changes without browser evidence"
+      ]
+    }
+  ]
+}

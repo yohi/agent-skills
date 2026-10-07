@@ -1,0 +1,45 @@
+{
+  "result": "NOT_VERIFIED",
+  "reason": "Required browser MCPs (Chrome DevTools MCP / Playwright MCP) are not available, and neither the browser CDP endpoint (127.0.0.1:9222) nor the target application (http://localhost:3000) is reachable.",
+  "precheck": {
+    "browser_mcp_available": false,
+    "playwright_mcp_available": false,
+    "cdp_endpoint_reachable": false,
+    "target_app_reachable": false
+  },
+  "reproduction": {
+    "requested_steps": "Press the save button in the browser and investigate the failure.",
+    "executed": false,
+    "actual": null,
+    "expected": null
+  },
+  "observation": {
+    "console": null,
+    "network": null,
+    "dom": null,
+    "runtime": null,
+    "screenshot": null
+  },
+  "diagnosis": {
+    "root_cause_proven": false,
+    "root_cause": null
+  },
+  "fix": {
+    "performed": false,
+    "files_changed": [],
+    "reason": "No browser MCP available and target not reachable; FIX phase skipped per fail-closed rule."
+  },
+  "verify": {
+    "performed": false,
+    "fix_verified": false
+  },
+  "regression": {
+    "performed": false,
+    "reason": "Skipped per v1 scope."
+  },
+  "remaining_risks": [
+    "Browser MCP must be enabled/installed before retry.",
+    "Chrome/Chromium must be started with --remote-debugging-port=9222.",
+    "Target application must be running on http://localhost:3000."
+  ]
+}

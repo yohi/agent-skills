@@ -1,0 +1,9 @@
+{
+  "status": "not_started",
+  "reason": "target_url_not_provided",
+  "target_url": null,
+  "verification_performed": false,
+  "findings": [],
+  "errors": [],
+  "notes": "URL was not explicitly specified, and inferring it from other eval cases or metadata was prohibited."
+}

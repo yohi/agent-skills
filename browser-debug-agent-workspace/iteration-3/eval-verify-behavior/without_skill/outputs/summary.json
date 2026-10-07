@@ -1,0 +1,10 @@
+{
+  "success": false,
+  "verified_url": null,
+  "reason": "対象 URL が明示的に指定されていないため、実ブラウザでの動作確認を実行できませんでした。",
+  "errors": [
+    "対象 URL が指定されていません。",
+    "他の eval ケースやメタデータから URL を推定しない制約により、検証対象を特定できません。"
+  ],
+  "notes": "browser-debug-agent skill は使用せず、デフォルトツールのみで判断しました。"
+}

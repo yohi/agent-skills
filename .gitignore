@@ -11,3 +11,4 @@ node_modules/
 /.agent-setup/
 /.agent-setup-fixtures/
 /.agent-setup-workspace/
+.worktrees

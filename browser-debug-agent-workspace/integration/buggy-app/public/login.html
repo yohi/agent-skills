@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Login</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    input, button { display: block; margin: 0.5rem 0; padding: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Login</h1>
+  <form id="login-form">
+    <input type="text" id="username" placeholder="Username" value="test" />
+    <input type="password" id="password" placeholder="Password" value="test" />
+    <button type="submit">Login</button>
+  </form>
+  <script src="/app.js"></script>
+  <script>
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await fakeLogin();
+    });
+  </script>
+</body>
+</html>

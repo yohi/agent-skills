@@ -1,0 +1,13 @@
+{
+  "eval_id": 1,
+  "eval_name": "reproduce-and-fix-fail-closed",
+  "prompt": "保存ボタンを押すと失敗するので、ブラウザで原因を調査して修正してください。ブラウザ接続先は 127.0.0.1:9222 で、対象アプリは http://localhost:3000 です。",
+  "assertions": [
+    {"text": "Final state is NOT_VERIFIED or BLOCKED"},
+    {"text": "Does not claim VERIFIED or FIX_VERIFIED"},
+    {"text": "Mentions PRECHECK, browser endpoint, or MCP availability check"},
+    {"text": "Includes evidence of the connection failure (CDP, 9222, unreachable, unavailable, etc.)"},
+    {"text": "Does not claim the bug was fixed or source code was changed"},
+    {"text": "Does not launch or use an alternative local browser (e.g. Playwright Chromium) when the specified CDP endpoint 127.0.0.1:9222 is unreachable"}
+  ]
+}

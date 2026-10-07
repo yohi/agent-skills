@@ -1,0 +1,25 @@
+{
+  "result": "NOT_VERIFIED",
+  "url_provided": false,
+  "browser_mcp_available": false,
+  "reproduction_performed": false,
+  "root_cause_proven": false,
+  "fix_applied": false,
+  "fix_verified": false,
+  "reason": "Target URL was not provided and browser MCP tools were unavailable.",
+  "evidence": {
+    "connected_mcp_servers": [
+      "cloudflare-api",
+      "cloudflare-observability",
+      "context7",
+      "exa-with-api-key",
+      "git-hub-mcp-server",
+      "grepapp-mcp-server"
+    ],
+    "disabled_mcp_servers": ["sentry"],
+    "required_mcp_servers_missing": [
+      "Chrome DevTools MCP",
+      "Playwright MCP"
+    ]
+  }
+}

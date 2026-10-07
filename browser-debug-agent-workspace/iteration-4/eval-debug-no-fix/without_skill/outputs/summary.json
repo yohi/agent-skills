@@ -1,0 +1,26 @@
+{
+  "result": "NOT_VERIFIED",
+  "status": "BLOCKED",
+  "fix_authorized": false,
+  "fix_performed": false,
+  "fix_verified": false,
+  "target_url": null,
+  "browser_endpoint": null,
+  "workflow_completed": ["PRECHECK"],
+  "workflow_skipped": ["REPRODUCE", "OBSERVE", "DIAGNOSE", "FIX"],
+  "fact_hypothesis_separated": true,
+  "observation_categories": {
+    "Console": {"collected": false, "reason": "利用可能なブラウザ／CDP 接続先がなく、対象 URL も未提示"},
+    "Network": {"collected": false, "reason": "利用可能なブラウザ／CDP 接続先がなく、対象 URL も未提示"},
+    "DOM": {"collected": false, "reason": "利用可能なブラウザ／CDP 接続先がなく、対象 URL も未提示"},
+    "Runtime": {"collected": false, "reason": "利用可能なブラウザ／CDP 接続先がなく、対象 URL も未提示"},
+    "Screenshot": {"collected": false, "reason": "利用可能なブラウザ／CDP 接続先がなく、対象 URL も未提示"}
+  },
+  "evidence": [
+    "Target application URL was not provided",
+    "No available browser MCP/Playwright MCP connection was present",
+    "CDP endpoint http://127.0.0.1:9222/json/version refused the connection",
+    "No playwright/chromium/chromium-browser/google-chrome executable was found on PATH and no corresponding running browser process was observed"
+  ],
+  "notes": "Login-after-white-screen behavior could not be reproduced or observed. No source code was modified. Cause remains unverified; FIX_VERIFIED is not claimed."
+}

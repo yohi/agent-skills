@@ -1,0 +1,15 @@
+{
+  "status": "NOT_VERIFIED",
+  "sub_status": "BLOCKED",
+  "fix_applied": false,
+  "fix_verified": false,
+  "browser_used": false,
+  "source_code_examined": true,
+  "root_cause_proven": false,
+  "reason": "対象となるUI/認証コードがプロジェクト内に存在せず、ブラウザも使用できないため、原因特定・修正・検証のいずれも実施できなかった。",
+  "notes": [
+    "プロジェクト内に login/auth/rendering 関連のソースコードが検出されなかった",
+    "ブラウザによる検証は不可能であるため FIX_VERIFIED は主張しない",
+    "ソースコードベースの診断は実施したが、ブラウザ証明された診断ではない"
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "result": "NOT_VERIFIED",
+  "skill": "browser-debug-agent",
+  "phases_completed": [
+    "PRECHECK"
+  ],
+  "phases_skipped": [
+    "BASELINE",
+    "REPRODUCE",
+    "OBSERVE",
+    "DIAGNOSE",
+    "FIX",
+    "VERIFY",
+    "REGRESSION"
+  ],
+  "browser_mcp_available": false,
+  "available_mcp_servers": [
+    "cloudflare-api",
+    "cloudflare-observability",
+    "context7",
+    "exa-with-api-key",
+    "git-hub-mcp-server",
+    "grepapp-mcp-server"
+  ],
+  "target_url": null,
+  "browser_endpoint": null,
+  "fix_authorized": false,
+  "fix_performed": false,
+  "root_cause_proven": false,
+  "notes": "Required browser MCP (Chrome DevTools MCP or Playwright MCP) is not available. The blank-screen-after-login issue could not be observed, reproduced, or diagnosed."
+}

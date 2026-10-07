@@ -1,0 +1,24 @@
+{
+  "result": "NOT_VERIFIED",
+  "fix_authorized": true,
+  "fix_applied": false,
+  "fix_verified": false,
+  "root_cause_proven": false,
+  "browser_cdp_reachable": false,
+  "app_reachable": false,
+  "browser_mcp_available": false,
+  "reproduction_performed": false,
+  "user_request": "保存ボタンを押すと失敗するので、ブラウザで原因を調査して修正してください。ブラウザ接続先は 127.0.0.1:9222 で、対象アプリは http://localhost:3000 です。",
+  "cdp_endpoint": "127.0.0.1:9222",
+  "target_url": "http://localhost:3000",
+  "evidence": {
+    "cdp_connection": "接続を拒否されました (Connection refused)",
+    "app_connection": "接続を拒否されました (Connection refused)",
+    "mcp_status": "Chrome DevTools MCP and Playwright MCP not available; enabled MCPs do not include browser tools"
+  },
+  "notes": [
+    "Fail-closed per Browser Debug Agent skill: unreachable browser/app and missing MCP tools prevent verification.",
+    "No source code changes were made because the root cause could not be browser-verified.",
+    "No fallback browser was installed or launched."
+  ]
+}

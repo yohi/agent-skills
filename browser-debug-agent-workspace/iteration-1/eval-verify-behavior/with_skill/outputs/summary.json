@@ -1,0 +1,31 @@
+{
+  "result": "NOT_VERIFIED",
+  "reason": "Browser MCP unavailable and target application unreachable; target URL not specified in eval metadata.",
+  "browser_mcp_available": false,
+  "cdp_endpoint_reachable": false,
+  "target_url_known": false,
+  "target_app_reachable": false,
+  "cdp_endpoint": "http://127.0.0.1:9222",
+  "candidate_target_url": "http://localhost:3000",
+  "evidence": {
+    "listeners": "no processes listening on 9222 or 3000",
+    "cdp_curl": "curl: (7) Failed to connect to 127.0.0.1:9222 after 0 ms: Could not connect to server",
+    "app_curl": "curl: (7) Failed to connect to localhost:3000 after 0 ms: Could not connect to server",
+    "available_mcps": [
+      "cloudflare-api",
+      "cloudflare-observability",
+      "context7",
+      "exa-with-api-key",
+      "git-hub-mcp-server",
+      "grepapp-mcp-server"
+    ],
+    "missing_mcps": [
+      "Chrome DevTools MCP",
+      "Playwright MCP"
+    ]
+  },
+  "phases_completed": ["PRECHECK"],
+  "phases_skipped": ["BASELINE", "REPRODUCE", "OBSERVE", "DIAGNOSE", "FIX", "VERIFY", "REGRESSION"],
+  "fix_performed": false,
+  "regression_run": false
+}
