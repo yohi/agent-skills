@@ -239,17 +239,8 @@ Before the AI agent can run integration evals, a human must:
 
 After that, the AI agent can run the integration evals autonomously.
 
-## Acceptance criteria not yet verified
+## Evaluation result retention
 
-The following will only be proven after a real Chrome + CDP connection is
-available:
-
-- Real Chrome reachable at `http://127.0.0.1:9222` through the SSH tunnel.
-- Chrome DevTools MCP connects successfully.
-- Scenario A reaches `FIX_VERIFIED` after a browser re-run.
-- Scenario B reaches `FIX_VERIFIED` after a browser re-run.
-- Scenario C reports `NOT_VERIFIED`/`BLOCKED` when the tunnel is down.
-- The Skill does not fall back to a non-specified browser or local Playwright.
-- `FIX_VERIFIED` is never reported without browser re-verification.
-
-These are the target criteria for the first real integration evaluation run.
+The scenario definitions and expected outcomes are maintained in
+[`eval/README.md`](eval/README.md) and [`eval/integration-evals.json`](eval/integration-evals.json).
+Per-run reports and screenshots are not retained in this repository.
