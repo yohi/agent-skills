@@ -61,3 +61,19 @@ connection.
 3. The expected UI/result was observed.
 4. The relevant browser failure is absent (no 500, no Console exception,
    no empty DOM).
+
+## Reproducible starting state
+
+The checked-in app is intentionally broken. Before Scenario A/B, create a
+disposable worktree and run `npm ci && npm run fixture:reset && npm test`
+inside its `buggy-app` directory. The health suite must PASS because it
+observes the expected failure behaviors, not a repaired application.
+
+Use `npm run fixture:save-failure` or `npm run fixture:post-login-blank`
+to isolate a single active bug. Fix the source without disabling the active
+bug flag. The separately invoked `npm run test:regression:settings` or
+`npm run test:regression:dashboard` should be RED before the fix and GREEN
+afterward, but browser verification is still mandatory.
+
+Keep each scenario on an independent branch/worktree. Do not merge source
+fixes or captured evaluation outputs into the fixture baseline.

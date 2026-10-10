@@ -1,0 +1,5 @@
+# Evaluation outputs and machine-local data (definitions/fixtures stay versioned)
+eval/evidence/
+eval/runs/
+eval/integration-report-*.md
+browser-host/chrome-profile/

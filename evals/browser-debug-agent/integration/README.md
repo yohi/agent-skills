@@ -170,11 +170,11 @@ Use one of the prompts in `eval/integration-evals.json`.
 
 The app has two kinds of changes with different activation rules:
 
-- **Config-only fixes** (editing `buggy-app/bug-config.json`): take effect on
-  the next HTTP request; no server restart needed.
-- **Source-code fixes** (editing `buggy-app/server.js` or
-  `buggy-app/public/app.js`): the agent **must restart** the server before
-  VERIFY, because Node.js loads those files once at startup.
+- **Fixture changes** (editing `buggy-app/bug-config.json`): take effect on
+  the next request, but disabling the bug does **not** qualify as a source fix.
+- **Backend source fixes** (`buggy-app/server.js`): restart the server before VERIFY.
+- **Frontend source fixes** (`buggy-app/public/app.js`): reload the page to
+  fetch updated JavaScript; restart the server only for backend changes.
 
 This contract prevents the agent from verifying a stale process after applying a
 source fix.
@@ -191,7 +191,10 @@ npm run fixture:post-login-blank   # only dashboardThrows ON
 ```
 
 `bug-config.json` is re-read on every request, so these scripts take effect
-immediately. For source-code fixes, restart the server after resetting config.
+immediately. The scenario-specific scripts set the other flag to `false`.
+Run `npm test` after `fixture:reset` to confirm the intended HTTP 500 and
+Dashboard exception remain reproducible. Restore a clean worktree before each
+new evaluation; resetting config alone cannot undo an applied source fix.
 
 ## Teardown
 
@@ -237,10 +240,39 @@ Before the AI agent can run integration evals, a human must:
 6. Configure the Chrome DevTools MCP command in the MCP client on the Agent
    Host.
 
-After that, the AI agent can run the integration evals autonomously.
+After that, the AI agent can run the integration evals autonomously, except
+for Scenario C's tunnel shutdown if the agent cannot safely identify the
+isolated tunnel process. Never terminate unrelated SSH sessions.
 
 ## Evaluation result retention
 
 The scenario definitions and expected outcomes are maintained in
 [`eval/README.md`](eval/README.md) and [`eval/integration-evals.json`](eval/integration-evals.json).
 Per-run reports and screenshots are not retained in this repository.
+
+## Isolation and reproducibility
+
+The committed `buggy-app` is an **intentionally broken, reusable baseline**.
+Never merge Scenario A/B source fixes into it.
+
+For each run, create a fresh `git worktree` or disposable clone from the
+evaluation baseline. Reset the selected fixture, verify its expected failure,
+and run the browser evaluation there. For example, from the repository root:
+
+```bash
+git worktree add -b eval/browser-debug-a-<run-id> /tmp/browser-debug-a-<run-id> HEAD
+cd /tmp/browser-debug-a-<run-id>/evals/browser-debug-agent/integration/buggy-app
+npm ci
+npm run fixture:reset
+npm test
+npm run fixture:save-failure
+# Start this worktree's app and perform Scenario A against it.
+# Before source fixes: npm run test:regression:settings must fail (RED).
+# After a permitted fix: it must pass (GREEN), followed by the real-browser VERIFY.
+```
+
+Use a unique branch, directory, and (if concurrent) server port per run. Do not
+run multiple scenarios against the same app process or browser session.
+`fixture:reset` changes **only** `bug-config.json`; it does not restore
+modified source files. Preserve run-specific reports/screenshots outside this
+repository, or in ignored `eval/runs/` and `eval/evidence/` paths.

@@ -5,10 +5,13 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "start:fixed": "node server.js --fixed",
     "fixture:reset": "node scripts/reset-fixture.js",
     "fixture:save-failure": "node scripts/save-failure.js",
-    "fixture:post-login-blank": "node scripts/post-login-blank.js"
+    "fixture:post-login-blank": "node scripts/post-login-blank.js",
+    "test": "npm run test:fixture",
+    "test:fixture": "node --test test/fixture-health.test.js",
+    "test:regression:settings": "node --test regression/settings-save.check.cjs",
+    "test:regression:dashboard": "node --test regression/dashboard-render.check.cjs"
   },
   "dependencies": {
     "express": "^4.21.0"

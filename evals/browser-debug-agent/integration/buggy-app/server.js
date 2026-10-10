@@ -23,9 +23,9 @@ function loadBugConfig() {
 // Contract for FIX -> VERIFY:
 //   * bug-config.json is re-read on every request, so fixture scripts take
 //     effect immediately.
-//   * Source-code fixes to server.js or public/app.js require a server restart
-//     before VERIFY. The agent must run `npm start` again (or use a process
-//     manager) after editing source files.
+//   * Backend source fixes to server.js require restarting the server.
+//   * Frontend source fixes to public/app.js require reloading the browser page.
+//     Restart the server only if backend source or configuration changed.
 
 app.get('/api/config', (req, res) => {
   res.json(loadBugConfig());
@@ -37,6 +37,11 @@ app.post('/api/login', (req, res) => {
 });
 
 app.post('/api/settings', (req, res) => {
+  const config = loadBugConfig();
+  if (config.settingsSaveFails) {
+    console.log('[BUG] /api/settings returning 500');
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
   res.json({ success: true, saved: req.body });
 });
 
