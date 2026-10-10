@@ -256,12 +256,16 @@ The committed `buggy-app` is an **intentionally broken, reusable baseline**.
 Never merge Scenario A/B source fixes into it.
 
 For each run, create a fresh `git worktree` or disposable clone from the
-evaluation baseline. Reset the selected fixture, verify its expected failure,
-and run the browser evaluation there. For example, from the repository root:
+fixture-enabled evaluation baseline (e.g. `origin/master` **after this PR merges**).
+Reset the selected fixture, verify its expected failure, and run the browser
+evaluation there. For example, from the repository root:
 
 ```bash
-git worktree add -b eval/browser-debug-a-<run-id> /tmp/browser-debug-a-<run-id> HEAD
-cd /tmp/browser-debug-a-<run-id>/evals/browser-debug-agent/integration/buggy-app
+RUN_ID="$(date +%Y%m%d%H%M%S)"
+git fetch origin master
+git worktree add -b "eval/browser-debug-a-${RUN_ID}" \
+  "/tmp/browser-debug-a-${RUN_ID}" origin/master
+cd "/tmp/browser-debug-a-${RUN_ID}/evals/browser-debug-agent/integration/buggy-app"
 npm ci
 npm run fixture:reset
 npm test

@@ -1,0 +1,52 @@
+name: Browser Debug Agent Fixture Integrity
+
+on:
+  pull_request:
+    paths:
+      - 'evals/browser-debug-agent/**'
+      - '.github/workflows/browser-debug-agent-fixtures.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'evals/browser-debug-agent/**'
+      - '.github/workflows/browser-debug-agent-fixtures.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fixture-integrity:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: evals/browser-debug-agent/integration/buggy-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: evals/browser-debug-agent/integration/buggy-app/package-lock.json
+      - run: npm ci
+      - name: Assert intentionally broken baseline
+        run: |
+          npm run fixture:reset
+          npm test
+      - name: Confirm repaired-regression checks are RED on baseline
+        run: |
+          if npm run test:regression:settings; then
+            echo "ERROR: Scenario A regression check unexpectedly passed on the buggy baseline" >&2
+            exit 1
+          fi
+          if npm run test:regression:dashboard; then
+            echo "ERROR: Scenario B regression check unexpectedly passed on the buggy baseline" >&2
+            exit 1
+          fi
+      - name: Confirm scenario selectors isolate the active bug
+        run: |
+          npm run fixture:save-failure
+          node -e "const assert=require('node:assert/strict'); const c=require('./bug-config.json'); assert.deepEqual(c,{settingsSaveFails:true,dashboardThrows:false});"
+          npm run fixture:post-login-blank
+          node -e "const assert=require('node:assert/strict'); const c=require('./bug-config.json'); assert.deepEqual(c,{settingsSaveFails:false,dashboardThrows:true});"
+          npm run fixture:reset
+          git diff --exit-code -- bug-config.json
