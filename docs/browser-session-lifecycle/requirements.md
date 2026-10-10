@@ -129,7 +129,7 @@ does **not** implement CDP, Chrome process control, or the SSH transport.
 
 No production implementation is authorized by this draft.
 
-## 9. Normative remediation contracts — FDR-030-001 through 007
+## 9. Normative remediation contracts — FDR-030-001 through 010
 
 ### BSL-019 — Lease-scoped revocation and generation fencing (001)
 
