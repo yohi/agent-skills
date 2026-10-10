@@ -1,9 +1,10 @@
 # Browser Session Lifecycle Integration — Technical Design
 
-Status: DRAFT / FRESH INDEPENDENT REVIEW REQUIRED — NOT IMPLEMENTATION_READY
+Status: FRESH DESIGN REVIEW PASS — SPIKE 0 AUTHORIZED; PRODUCTION IMPLEMENTATION NOT_AUTHORIZED
 Date: 2026-10-10 (JST)
 Requirements: [requirements.md](requirements.md)
-Review baseline: FDR-030-001..010 (this revision addresses 008–010)
+Review baseline: FDR-030-001..013 (all resolved; FDR-030-014 is non-blocking PR metadata/header synchronization)
+Design review evidence: Independent Fresh Design Review of commit `59a76977c4217278df2791efdb6fd0ccd053e820`, dated 2026-10-10.
 
 ## 1. Decision: Skill-owned workflow, Broker-owned connections
 
@@ -363,7 +364,7 @@ are required; mocked unit tests are insufficient.
 
 ## 7. Stage gates and limitations
 
-**Design is DRAFT / Implementation NOT_AUTHORIZED.**
+**Fresh Design Review: PASS. Spike 0: AUTHORIZED / NOT_STARTED. Production Implementation: NOT_AUTHORIZED.**
 
 - **Spike 0, executable contracts**: prove installed OpenCode V1
   **per-call authenticated session gating on same shared MCP** (including
