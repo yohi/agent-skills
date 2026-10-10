@@ -1,259 +1,344 @@
 # Browser Session Lifecycle Integration — Technical Design
 
-Status: DRAFT — subject to contract spike and independent review
+Status: DRAFT / FRESH REVIEW REQUIRED — not IMPLEMENTATION_READY
 Date: 2026-10-10 (JST)
 Requirements: [requirements.md](requirements.md)
+Revision: FDR-030-001 through FDR-030-007; preserve v1 browser debugging contract
 
-## 1. Decision
-
-**Single user entry point, separate ownership boundaries:**
+## 1. Decision and responsibility boundaries
 
 ```text
-OpenCode (Agent Host, Ubuntu Server)
-  └─ browser-debug-agent Skill (workflow authority)
-       └─ browser_session tool (OpenCode adapter)
-            └─ Agent Controller (lease/state/SSH ownership)
-                 ├─ SSH remote control: start/status/renew/release
-                 ├─ SSH -L 127.0.0.1:9222 → Desktop 127.0.0.1:9222
-                 ├─ optional SSH -R Desktop 127.0.0.1:3000 → Agent 127.0.0.1:3000
-                 └─ Chrome DevTools MCP (official, pinned)
-                      ↓
-Browser Host (Ubuntu Desktop)
-  ├─ sshd (existing Tailscale-restricted access)
-  ├─ browser-sessionctl (restricted control verbs)
-  ├─ systemd --user (transient owned Chrome service)
-  ├─ systemd --user timer/service (lease expiry reaper)
-  └─ headful Chrome (owned temporary automation profile, loopback CDP)
+OpenCode on Agent Host (Ubuntu Server)
+   └─ browser-debug-agent Skill (workflow and user-visible entry point)
+       └─ OpenCode adapter (trusted owner ID, lifecycle, finalization)
+           └─ Agent Controller (exclusive epoch, restricted SSH, health)
+               ├─ management SSH (separate constrained key/channel)
+               ├─ data SSH -L 127.0.0.1:9222:LEASE_UNIX_SOCKET
+               │    [listen only in owned MCP isolation domain]
+               └─ official Chrome DevTools MCP (same owning OpenCode instance)
+                         │
+                         ▼
+Browser Host (Ubuntu Desktop / dedicated GUI UID)
+   ├─ restricted sshd management/forwarding entrypoints (Tailscale)
+   ├─ Desktop Controller (authenticated lease epochs + durable tombstones)
+   ├─ lease-unique UDS relay (hard revocation, close accepted streams)
+   ├─ per-lease isolated network namespace: Chrome CDP TCP loopback
+   ├─ headful Chrome under dedicated GUI user systemd --user unit
+   └─ independent systemd --user watchdog / reaper + linger
 ```
 
-Keep `browser-debug-agent`'s browser debugging workflow and terminal states.
-The Skill calls `browser_session.acquire` before its existing PRECHECK and
-`browser_session.release` after REPORT. A failed acquire is an explicit
-`NOT_VERIFIED`/`BLOCKED` and still records NOT_COLLECTED observation fields.
+`browser-debug-agent` is the one Skill the user invokes. Chrome lifecycle
+and SSH are implemented in separate Controllers; Chrome DevTools MCP remains
+the **official browser control implementation**, not replaced by a homemade
+CDP stack. The lifecycle relay is **byte transport only**; it must not inspect
+or fabricate Console/Network/DOM/Screenshot evidence.
 
-**No custom CDP wrapper**. The Session Controller does not inspect pages or
-forge browser evidence. The official MCP remains the only browser tool.
+Legacy manual Desktop→Agent `-R 9222` flow is retained only in historical
+integration tests. The new deployment intentionally changes the SSH direction
+to Agent→Desktop and MUST NOT reuse the old Desktop TCP forwarding target.
 
-## 2. Trust boundaries and ownership
+## 2. Authoritative identity and CDP isolation (FDR-030-002/004)
 
-1. The OpenCode adapter extracts the verified session ID and agent process
-   context from the runtime; the LLM may request acquire/release but cannot
-   nominate an arbitrary owner or host shell command.
-2. The Agent Controller issues a cryptographically random lease ID/token, stores
-   it under an owner-only runtime directory (0700), and never emits the token
-   into tool results, transcript or logs.
-3. The Desktop Controller authenticates a restricted SSH principal and validates
-   a lease-specific capability for `renew/release`. Ownership is checked
-   against its state under a locked private directory.
-4. All Chrome, profile, tunnel and service artifacts are tagged with lease
-   identity; the controller never adopts or terminates foreign instances.
-5. Exclusive v1 lock guards the fixed CDP endpoint and Desktop Chrome.
-   Different owners receive `BROWSER_SESSION_BUSY`; same owner receives
-   the existing lease if still healthy.
-6. The environment must not require a root service or an arbitrary remote shell
-   for normal operation. One-time human provisioning of SSH key restrictions and
-   `systemd --user` timer is allowed.
+**Desktop identity**: a separately provisioned non-admin graphical account
+(role label `browser-agent`), distinct from the human's ordinary Chrome user.
+The *same* UID owns the graphical login, SSH restricted management session,
+`systemd --user` Chrome service, lease store and watchdog. The actual account
+name/UID/seat are bound by provisioning and verified at startup; no assumption
+that a separate SSH account can control another user's systemd instance.
+The restricted SSH key grants only allowlisted typed control requests and
+needed lease-bound forwarding. A different SSH UID requires a separate, reviewed
+cross-UID broker. Agent forwarding, X11 forwarding, broad SSH shell and sudo
+are disabled for AI traffic. If network namespace creation requires privilege,
+a pre-provisioned fixed-operation service/helper may be used; normal AI tools
+must never receive generic sudo, shell, network-admin or namespace-create power.
 
-## 3. Interface contract (logical schema)
+**Desktop namespace**: each lease creates a network-isolated Chrome+CDP
+environment. CDP is bound to `127.0.0.1:9222` *inside that namespace only*.
+It must not be reachable from host/shared loopback. A session-owned TCP↔UDS
+relay in the same network namespace connects to Chrome TCP and accepts only
+connections on a lease-unique filesystem Unix socket exposed to the
+restricted SSH transport. The relay supports arbitrary byte streams/Chrome
+WebSockets without interpreting CDP; it must track and kill accepted sockets.
+Permissions, dedicated account boundary and a Chrome-private mount view
+prevent untrusted Browser Host processes (including Chrome itself) from
+opening the SSH-facing socket. Do not claim UID-only checks exclude a
+same-UID attacker; the account is dedicated and compartmentalization must
+be measured in Spike 0.
 
-These are **design contracts**, not claims that the current plugin already
-provides these methods.
+**Chrome network access**: a network namespace with only a loopback device
+cannot browse ordinary sites. Configure a narrowly provisioned per-lease
+egress path (e.g. restricted veth/NAT/user-space networking, with DNS) that
+does not expose CDP to another namespace. Browser access to the optional
+Agent-hosted app must also be routed/proxied *inside the Chrome namespace*;
+a reverse forwarded port on Desktop host loopback alone is not visible
+inside that namespace. Do not mark this interface designed-and-proven until
+GUI and real application routing are tested on target Ubuntu.
+
+**Agent namespace**: Agent-local TCP `127.0.0.1:9222` is owned by a
+separately isolated domain housing the data SSH listener and the *exact
+official MCP process* that OpenCode makes available to the owning Skill.
+Untrusted shell commands/test processes and other OpenCode sessions, even
+under the same login, cannot enter the domain or contact this port. A trusted
+launcher/adapter passes MCP stdio to OpenCode without providing arbitrary
+namespace entry or a reusable TCP bridge. Fail closed if the installed
+Linux/kernel privilege/security configuration cannot enforce this.
+`127.0.0.1` is a network scope, never an authorization boundary by itself.
+
+The stated threat excludes compromised root/kernel and theft of explicitly
+authorized controller secrets/SSH keys. It **does not** trust unrelated local
+applications, test processes or other AI agent sessions.
+
+## 3. Lease identity and owner fencing (FDR-030-001)
+
+Each lease is `(owner_from_adapter, epoch, private_capability)`. The epoch is
+a collision-resistant never-reused identifier; the private bearer capability
+is stored with restrictive filesystem permissions outside model context.
+Names/handles passed to the LLM are non-authorizing. Durable state records
+the Chrome unit identity, netns identity, relay unit, socket path, SSH tunnel
+PID/process start identity, MCP instance identity, timer and timestamps.
+
+Use a private *per-epoch* filesystem UDS path on Desktop (symbolically
+`$XDG_RUNTIME_DIR/browser-lease/<epoch>/cdp.sock`). The directory has 0700
+permissions; a retired path is not reused or redirected. SSH local forwarding
+targets **that Unix socket** rather than `127.0.0.1:9222` on Desktop:
 
 ```text
-browser_session.acquire(target_url?, app_forward?)
-  ownership: injected by adapter, not LLM
-  return: {state: READY, lease_handle: opaque, cdp_url: "http://127.0.0.1:9222",
-           chrome_product, chrome_version, mcp_ready: true}
-  error:  {state: BLOCKED | NOT_VERIFIED, code, stage, cleanup_state}
+ssh -L 127.0.0.1:9222:/run/user/<GUI_UID>/browser-lease/<EPOCH>/cdp.sock
+```
+
+This is a documented OpenSSH forwarding *shape*, not an executable command:
+the actual data SSH process must be started inside its isolated Agent domain
+with the restricted identity, flags and optional app reverse forwarding. The
+Desktop ingress must be disabled even if the old Agent-side SSH process
+persists or restarts. Do not rely on `ExitOnForwardFailure` alone: it proves
+the port binding, not ultimate UDS or Chrome reachability. <EPOCH> is a
+locally generated identity; never interpolate model-supplied path components.
+
+**Revocation barrier (authoritative Desktop transaction):**
+1. Under an exclusive Desktop lease lock, change CURRENT epoch to REVOKING
+   and durably commit a revocation tombstone *before* releasing the lock.
+2. Relay stops accepting sockets, rejects queued/late connects, terminates
+   existing Chrome WebSocket/data streams, closes and unlinks owned UDS;
+   network namespace and Chrome unit are stopped.
+3. Validate that endpoint, relay and Chrome unit have terminated and remove
+   only an owned ephemeral profile.
+4. Persist CLOSED/REVOKED terminal epoch. Permit B acquire only once the old
+   ingress barrier and cleanup are verified. A incomplete cleanup returns
+   CLEANUP_PENDING and blocks successor acquire, including after reboot.
+
+The relay checks authoritative CURRENT epoch before accepting/connecting and
+must never rebind a REVOKED socket path. Chrome B uses its **own** namespace and
+new UDS endpoint. Thus stale Tunnel A may keep listening at its Agent port,
+but remote A socket has no accepting relay and cannot reach B. Include
+already-established WebSocket teardown in the acceptance proof.
+
+## 4. Lifecycle API and readiness ownership (FDR-030-007)
+
+These are contracts for future tools, not claims about current OpenCode APIs.
+
+```text
+browser_session.acquire(target_url?, agent_app_forward?)
+  Owner: trusted OpenCode adapter, never caller-provided
+  Success: { state: READY, lease_label, cdp_url: "http://127.0.0.1:9222",
+             browser_identity, actual_mcp_instance, epoch_label }
+  Failure: { state: NOT_VERIFIED | BLOCKED, code, stage, cleanup_state }
 
 browser_session.status()
-  return: {state, code?, lease_healthy, cdp_healthy, cleanup_state}
+  → { state, lease_healthy, tunnel_healthy, mcp_healthy, cleanup_state }
 
 browser_session.release()
-  return: {state: CLOSED | CLEANUP_PENDING, cleanup_state, code?}
+  → { state: CLOSED | CLEANUP_PENDING, cleanup_state, code? }
 ```
 
-The handles returned to the model are non-sensitive labels, not bearer tokens.
-Host-controller wire commands use authenticated, typed requests and supply
-private credential material through a protected channel (not argv/log output).
-All APIs are bounded, idempotent and reject unknown fields and invalid IDs.
+Sensitive epoch capabilities, SSH keys, Authorization headers and personal
+browser data do not appear in LLM tool results or logs. Labels are not
+credentials. Errors include `BROWSER_SESSION_BUSY`, `FOREIGN_ENDPOINT`,
+`GUI_SESSION_UNAVAILABLE`, `SSH_AUTH_FAILED`, `CDP_UNAVAILABLE`,
+`MCP_UNAVAILABLE`, `TUNNEL_DEGRADED`, `LEASE_REVOKED`,
+`ISOLATION_UNAVAILABLE` and `CLEANUP_PENDING`.
 
-Error codes include:
-`GUI_SESSION_UNAVAILABLE`, `DESKTOP_UNREACHABLE`, `SSH_AUTH_FAILED`,
-`CHROME_START_FAILED`, `CDP_PORT_OCCUPIED`, `CDP_UNAVAILABLE`,
-`MCP_UNAVAILABLE`, `APP_FORWARD_UNAVAILABLE`, `BROWSER_SESSION_BUSY`,
-`LEASE_LOST`, `CLEANUP_PENDING`, `UNKNOWN_OWNER`.
+Agent acquisition sequence:
+1. Verify owning OpenCode execution context and browser intent; exclusive
+   adapter lock ensures same-owner idempotency. Reject competing owner.
+2. Verify GUI UID/seat, namespace isolation capability, restricted SSH,
+   target URL and optional app endpoint. Unknown URL is not inferred.
+3. Atomically allocate provisional Desktop CURRENT epoch and own
+   Chrome/netns/relay. Prevent inheritance of any personal profile/session.
+4. Verify owned Chrome process + CDP browser identity **inside its namespace**;
+   provision tested network/app connectivity.
+5. Start tracked Agent data SSH in its isolated MCP network/security domain:
+   `-L 127.0.0.1:9222:<lease-specific-Desktop-UDS>`, optional tightly
+   scoped `-R` for app forward. Check port/process identity on both sides.
+6. Verify Agent-isolated CDP endpoint and call `list_pages` through the
+   **exact OpenCode-registered official Chrome DevTools MCP instance** that
+   the Skill will later invoke. Capture OpenCode MCP instance/process ID,
+   owning session, lease epoch and Chrome identity from the same call path.
+   A separate probe MCP does not count. Disallow direct/unleased MCP calls
+   by process/network gating, not merely by trusting Skill instructions.
+7. Commit READY only after step 6. Any mismatch rolls back and revokes lease.
 
-The contract must document distinction between provisionally connected CDP
-and an actual successful MCP tool call. The latter is required for READY.
+A healthy standalone `curl /json/version` or a separately started
+`chrome-devtools-mcp` is *insufficient*. Confirm installation/version and
+whether OpenCode can initialize/register MCP after acquire in Spike 0. If it
+cannot, implement a tested adapter-owned gating/initialization sequence and
+revise the interface; do not falsify READY.
 
-## 4. Agent Host acquisition sequence
+## 5. Health-gated renewals (FDR-030-003)
 
-1. Accept Skill/Plugin acquire only for browser work. A per-owner lock
-   serializes calls; re-entrant calls use the same healthy lease.
-2. Validate configured Desktop identity, key scope, SSH reachability, target
-   URL and optional app endpoint. Do not guess URLs.
-3. Via *restricted SSH management command*, inspect Desktop GUI readiness and
-   check that no foreign Chrome or service owns the requested CDP port.
-4. Atomically create lease in STARTING with short provisional expiry. Start
-   Chrome as a `systemd --user`-owned service in the pre-existing GUI user's
-   graphical environment. Reject ambiguous or absent GUI sessions.
-5. Confirm Desktop port `127.0.0.1:9222` belongs to the **owned** Chrome unit,
-   and Desktop `/json/version` returns expected Chrome identity.
-6. Agent starts its own tracked SSH tunnel process, with loopback-only
-   `-L 127.0.0.1:9222:127.0.0.1:9222` and, *only for Agent-local apps*,
-   `-R 127.0.0.1:3000:127.0.0.1:3000` (or explicitly configured port).
-   Use `BatchMode=yes`, `ExitOnForwardFailure=yes`, server-alive settings,
-   no X11/agent forwarding, and explicit SSH identity. The tunnel process
-   identity is stored by the Agent Controller; never use `pkill ssh`.
-7. Assert local port ownership and CDP response through the new forward, then
-   issue a genuine Chrome DevTools MCP `list_pages` call. Mere `npx` startup
-   or `curl` does not establish MCP readiness.
-8. Commit state READY only after all checks. If any step fails, stop the owned
-   tunnel/unit and revoke the provisional lease. If cleanup is incomplete,
-   report `CLEANUP_PENDING` for watchdog recovery.
+`READY → IDLE → READY` is a bounded reuse path for the *same* owner/epoch.
+Renewals originate from a trusted Agent Controller timer, not a model call.
+Each renewal must establish **all**:
 
-Use a fixed Agent-local port 9222 and one owner for v1. Any conflicting
-listener is a hard error. Optional app `-R` likewise fails on port collision;
-never expose `0.0.0.0`. A port bind being accepted does *not* by itself prove
-the ultimate target service is reachable.
+1. OpenCode owner still active or within a bounded idle grace.
+2. Desktop epoch still CURRENT and unexpired.
+3. Correct Agent data SSH PID/start-identity active, **not merely management SSH**.
+4. Authoritative Desktop relay socket is CURRENT and reachable through that
+   exact SSH tunnel.
+5. The owning OpenCode MCP instance completes a bounded health `list_pages`
+   against the matching Chrome, not a different MCP process.
 
-## 5. Desktop user session and process supervision
+Failure stops lease renewal immediately, transitions to DEGRADED with a fixed,
+non-extendable recovery deadline and instructs the Desktop to REVOKE as soon
+as possible. If transport prevents direct revoke, the pre-existing Desktop
+expiry deadline is the backstop. Optional reconnect to the same CURRENT epoch
+may be attempted only within the fixed deadline after full rechecks; no
+recovery attempt may revive a REVOKED epoch or reuse an old socket for B.
+After deadline -> REVOKING/CLEANUP_PENDING. No indefinite retry.
 
-Use an existing logged-in Ubuntu Desktop graphical user session. SSH login
-environment (`DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, DBus address)
-is **not** assumed to be the GUI environment. One-time setup must ensure the
-relevant environment is safely registered with the systemd user manager from
-the actual Desktop session; verify that launching a transient user service
-opens Chrome in the intended seat.
+Provisional spike values (not approved operating settings):
+30 s heartbeat, 180 s max TTL, 60 s watchdog period, 120 s idle grace, a
+fixed recovery budget strictly shorter than the remaining TTL. Deadline/TTL
+must use host-side monotonic time while running and durably bounded
+wall-clock recovery across reboot; client-reported time is non-authoritative.
+Reaper expiry is independent of management SSH health. Browser verification
+during DEGRADED is NOT_VERIFIED until a fresh same-epoch MCP proof succeeds.
 
-Create an explicitly session-owned unit/profile with restrictive permissions.
-Do not start Chrome under root, borrow a personal Chrome process, turn on
-headless mode silently, or delete an unknown profile. Profile destruction is
-permitted only for verified controller-created ephemeral paths after stopping
-the owning Chrome; otherwise report cleanup pending.
+## 6. Desktop GUI, watchdog, and recovery (FDR-030-004/005)
 
-No assumption is made that the GUI is available while logged out, locked,
-asleep, or during a display-manager transition. Non-ready GUI is BLOCKED.
-Supporting WoL/unlock/autologin is outside the first rollout.
+Desktop `browser-agent` is a dedicated graphical account with an active
+authorized login seat. Start headful Chrome via its own `systemd --user`
+transient unit, but do not assume SSH `DISPLAY`/`WAYLAND_DISPLAY`/
+`DBUS_SESSION_BUS_ADDRESS` values are the GUI session's environment.
+Provision/verify the actual GUI user manager's environment and prove a window
+opens on the intended seat. Lock screen/logged-out/ambiguous seat is BLOCKED
+unless the operator explicitly chooses an approved policy; never silently
+log in, unlock or launch headless Chrome.
 
-## 6. Lease, heartbeat and cleanup
+Provision `loginctl enable-linger browser-agent` (or measured equivalent)
+so that the user manager, watchdog timer and revocation authority can operate
+after GUI logout. Linger does not create a graphical session. On loss of the
+GUI session, new acquire is forbidden; existing lease must enter revocation.
+The watchdog owns a persistent recovery journal/tombstone in a private
+state directory and independently closes relay ingress then stops the owned
+Chrome and cleans owned profile. Its timer and cleanup mechanism must be
+tested after logout, manager shutdown/restart and reboot. Restart scans
+REVOKING/CLEANUP_PENDING, terminates only verified unit/cgroup identities,
+and fences old epochs. If manager failure permits surviving Chrome, an
+independent fail-closed termination/ingress revocation must be provisioned;
+otherwise implementation is BLOCKED.
 
-```text
-UNALLOCATED --acquire--> STARTING --validated--> READY
-    READY --no active work--> IDLE --reuse--> READY
-    READY/IDLE --release/delete/expiry--> RELEASING --> CLOSED
-    STARTING --failure--> RELEASING --> CLOSED or CLEANUP_PENDING
-    READY/IDLE --lost tunnel/host--> NOT_VERIFIED + cleanup pending
-```
+User-manager service supervision and permanent credential separation do not
+magically guarantee same-UID isolation. The Desktop setup is not approved until
+network namespace, socket/mount security, linger and true GUI browser operation
+are proven on the target desktop.
 
-**Two independent recovery paths**:
+## 7. Result finalization and Skill integration (FDR-030-006)
 
-- Agent-side adapter attempts release on Skill finalization, on observed
-  `session.deleted`, and after bounded idle grace. Plugin process-exit
-  cleanup is best-effort, never the sole guarantee.
-- Desktop-side `systemd --user` timer periodically checks lease expiry
-  without contacting Agent Host; after expiry, it stops only the matching
-  Chrome user unit and removes owned ephemeral artifacts.
-
-A separate Agent Controller heartbeat renews the Desktop lease while a
-legitimately owned active/idle-grace session exists. Heartbeats must not depend
-on individual browser tool invocations (the LLM may think for a long time).
-Heartbeat loss does not grant continued unlimited access. Suggested starting
-values for a spike: 30 s heartbeat, 180 s lease TTL, 60 s reaper interval,
-120 s session-idle grace; these are **not yet validated defaults**.
-
-Normal Skill finalization releases promptly, after browser evidence is
-captured; `session.idle` merely starts a grace timer. Release attempts are
-safe to repeat. If Agent cannot reach Desktop after terminating its own tunnel,
-the Desktop lease still expires independently.
-
-The adapter must use a verified event subscription mechanism. OpenCode
-`session.idle` must not be mistaken for session termination. The installed
-OpenCode hook/event payload schemas and ordering must be tested before code
-implementation. If `tool.execute.before` cannot reliably gate direct browser
-MCP tools, the design must explicitly prevent unmanaged MCP calls in another
-tested way or keep the integration NOT_READY.
-
-## 7. Skill workflow insertion
+Normal order:
 
 ```text
 SKILL ACTIVATION
-  → ACQUIRE_BROWSER_SESSION
-       ├─ READY → original PRECHECK
-       └─ failure → NOT_VERIFIED/BLOCKED + NOT_COLLECTED ledger + REPORT
-  → BASELINE
-  → REPRODUCE
-  → OBSERVE
-  → DIAGNOSE
-  → FIX (only if authorized)
-  → VERIFY
-  → REPORT
-  → RELEASE_BROWSER_SESSION (finally, regardless of success/failure)
+ → adapter ACQUIRE (automated, verified)
+ → PRECHECK (target app & real browser)
+ → BASELINE → REPRODUCE → OBSERVE → DIAGNOSE
+ → [FIX only with explicit authorization] → VERIFY
+ → CAPTURE_EVIDENCE → FINALIZE_RESULT (durable)
+ → RELEASE_BROWSER_SESSION (adapter-owned bounded action)
+ → EMIT_REPORT (final user-visible answer)
 ```
 
-The Controller's READY is infrastructure evidence only. The Skill still
-performs target-app reachability, page inspection, and root-cause and fix
-verification based on real browser observations. Never auto-fix code on a
-connection error. Playwright MCP may help interact only with the **same
-authorized browser**, and may not launch a substitute browser after loss.
+The agent cannot reliably perform a tool call *after* its final message.
+Natural-language `finally` in a Skill is not an execution guarantee.
+Therefore the trusted adapter/supervisor coordinates finalization, performs
+release before the final response or durably delegates cleanup before
+responding, and records `CLEANUP_PENDING` if cleanup fails. Abnormal
+termination is handled by the separate Desktop watchdog.
 
-## 8. Testing and validation matrix
+Preserve the browser outcome separately from cleanup outcome:
+`FIX_VERIFIED` is legal only on same-browser/same-scenario evidence;
+successfully starting a Chrome is never `VERIFIED`. If browser disconnects,
+report `NOT_VERIFIED`/`BLOCKED`, with each missing Console/Network/DOM/
+Runtime/Screenshot evidence marked `NOT_COLLECTED`. If a fix occurred but
+verification did not, use `FIX_APPLIED_NOT_VERIFIED`.
 
-| Test | Expected |
+OpenCode `session.idle` is a grace timer signal, not termination;
+`session.deleted` attempts immediate release. If these events are not
+reliably delivered, the controller/host expiry still closes access.
+The installed OpenCode hook payloads and whether actual final replies can be
+gated for release are **unknown until Spike 0**. If pre-response release
+is impossible, document a durable controller-owned finalization protocol
+which releases independently before claiming readiness; no post-response
+model-call is accepted as the sole guarantee.
+
+## 8. Negative tests and acceptance matrix
+
+| Test | Required observation |
 | --- | --- |
-| Acquire → real Chrome/MCP → release | READY, then CLOSED; only lease-owned processes stopped |
-| Acquire twice, same owner | Same healthy lease, no duplicate Chrome |
-| Acquire, another session | `BROWSER_SESSION_BUSY`, owner remains intact |
-| Wrong token / forged owner | Rejected; no resource stopped |
-| Preoccupied 9222 / foreign Chrome | BLOCKED; no adoption or cleanup of foreign process |
-| SSH unavailable / Desktop asleep / GUI absent | NOT_VERIFIED/BLOCKED, no Chrome claim |
-| Agent local app `-R` on / off | Browser can access app only when forwarding requested |
-| Kill Agent/Plugin without callbacks | Host watchdog reaps lease on expiry |
-| Tunnel drops during browser verify | Browser result NOT_VERIFIED, no fallback |
-| Skill REPORT vs session.idle vs session.deleted | Immediate release vs grace vs forced release as contracted |
-| Start/release races; owner retries | No double allocation, stale owner cannot revoke active lease |
-| Prior v1 integration A/B/C | No regression in fix verification or fail-closed |
+| FDR-030-001: A expired, stale SSH tunnel kept, B starts | Old TCP/WebSockets fail; never hit B; revocation barrier proved |
+| FDR-030-001: revoke vs acquire race / restart | Old epoch never resumes; B cannot acquire until barrier completes |
+| FDR-030-002: unauthorized Agent/test process | No CDP HTTP or WebSocket access, including same-login test process |
+| FDR-030-002: unauthorized Desktop process | No direct TCP CDP or lease UDS access, authorized relay/MCP succeeds |
+| FDR-030-002: real Internet/Agent app from namespace Chrome | Web navigation works; CDP still isolated |
+| FDR-030-003: kill only data tunnel, management SSH alive | Heartbeats cease; Desktop expires/revokes; Browser NOT_VERIFIED |
+| FDR-030-004: GUI UID/SSH UID/user manager comparison | Every component has documented correct UID and seat |
+| FDR-030-005: Desktop logout/manager restart/reboot | No new GUI startup; durable cleanup replay; no orphaned CDP |
+| FDR-030-006: REPORT interruption/release failure | Durable result + release or CLEANUP_PENDING, before final reply |
+| FDR-030-007: probe MCP works but OpenCode MCP fails | No READY; identity of same actual MCP visible in evidence |
+| Same-owner duplicate acquire vs different owner | Idempotent same lease vs BROWSER_SESSION_BUSY |
+| Port taken by foreign process / partial startup | BLOCKED; never adopt or terminate foreign service |
+| Prior Scenario A/B/C | A/B true browser FIX_VERIFIED, C expected fail-closed |
+| Unexpected process kill / watchdog reboot | Private tombstone replay + no stale owner access |
 
-Evidence must show `systemctl --user` unit identity, loopback bind checks,
-both sides of tunnel, Chrome identity, real MCP tool result, and precise
-cleanup outcome. Do not mark the design IMPLEMENTATION_READY from command
-examples alone.
+Each negative test must be automated as far as technically possible and
+supplemented with actual two-host evidence. Unit mocks alone cannot prove
+network namespace boundaries, GUI seat ownership, Unix socket lifecycle,
+or OpenCode's real MCP process identity.
 
-## 9. Implementation stages / gate
+## 9. Implementation authority and milestones
 
-- **Spike 0 — executable contracts**: inspect installed OpenCode v1/plugin
-  types and event delivery; validate systemd graphical launch on actual
-  Ubuntu Desktop, SSH endpoint ownership and MCP start-before-CDP behavior.
-  Resolve gaps as explicit amendments.
-- **Stage 1 — Host lifecycle**: restricted `browser-sessionctl`, transient
-  Chrome service, exclusive lock, lease store and independent reaper.
-- **Stage 2 — Agent controller**: typed commands, SSH management, `-L`/optional
-  `-R`, health checks, ownership/rollback, heartbeat.
-- **Stage 3 — OpenCode adapter**: tools and lifecycle listeners; test that
-  ordinary MCP requests cannot escape acquisition or fail-closed gates.
-- **Stage 4 — Skill integration**: concise Skill insertion plus a direct
-  reference document; keep existing phases/terminal states.
-- **Stage 5 — two-host proof**: normal, duplicate/concurrent, crash, lost
-  SSH/MCP, cleanup and A/B/C regression. No master deployment before review.
+**Current status: DESIGN_BLOCKED pending independent review + Spike 0**.
 
-Ownership and acceptance of each stage must be reviewable independently.
-Existing PR #29's fixture repair is a separate change and should not be
-silently bundled into this work.
+- **Spike 0 (no production changes)**: verify OpenCode v1 API, actual
+  registered MCP identity and initialization sequence, restricted SSH
+  Unix-socket forwarding, process/UID/GUI seat relationships, namespace
+  privileges and Chrome Internet/app routing, user linger/logout cleanup.
+  Failure to prove any boundary requires explicit design amendment.
+- **Stage 1 Host**: lease epochs/revocation journal, namespace Chrome,
+  UDS relay, restricted account and watchdog.
+- **Stage 2 Agent**: MCP namespace, SSH data/management connections,
+  renewal health gates and durable release ownership.
+- **Stage 3 OpenCode adapter**: same MCP instance gating, events and final
+  response coordination.
+- **Stage 4 Skill**: succinct acquisition/finalization instructions and
+  progressive-disclosure reference; existing browser v1 workflow preserved.
+- **Stage 5 Tests**: all negative cases above and original Chrome A/B/C.
 
-## 10. References and limitations
+Do not merge PR #29 fixture corrections into this design PR or modify the
+historical integration baseline. No implementation or production deployment
+is authorized by documents alone.
 
-Repository-grounded baseline:
-- `skills/browser-debug-agent/SKILL.md`, `references/requirements.md`.
-- `evals/browser-debug-agent/integration/browser-host/start-chrome.sh`.
-- `evals/browser-debug-agent/integration/ssh-tunnel/setup-tunnel.sh`.
-- `evals/browser-debug-agent/integration/mcp/README.md`.
+## 10. Background documentation
 
-External contract references (verify against pinned installed versions):
-- OpenCode Plugins: https://docs.opencode.ai/docs/plugins/
-- Chrome DevTools MCP configuration:
-  https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/configuration.md
-- OpenSSH SSH forwarding semantics: https://man.openbsd.org/ssh
+- OpenSSH TCP-to-Unix forwarding: https://manpages.debian.org/unstable/openssh-client/ssh.1.en.html
+- Chrome DevTools MCP manual connection and loopback risk:
+  https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/advanced-usage.md
+- systemd user lingering:
+  https://www.freedesktop.org/software/systemd/man/latest/loginctl.html
+- systemd network namespace capabilities:
+  https://manpages.ubuntu.com/manpages/noble/man5/systemd.exec.5.html
+- OpenCode plugins: https://docs.opencode.ai/docs/plugins/
+- Baseline Skill: `skills/browser-debug-agent/SKILL.md`
 
-This document specifies target behavior; no two-host runtime, hook behavior,
-Chrome service, or lease reaper has been implemented or validated by this PR.
+Spike 0 must test the **installed versions**; external documentation alone is
+not proof that the proposed security and lifecycle controls function on the
+actual Ubuntu Desktop and Server systems.
