@@ -37,12 +37,6 @@ app.post('/api/login', (req, res) => {
 });
 
 app.post('/api/settings', (req, res) => {
-  const config = loadBugConfig();
-  if (config.settingsSaveFails) {
-    console.log('[BUG] /api/settings returning 500');
-    return res.status(500).json({ error: 'Internal Server Error' });
-  }
-  console.log('[FIXED] /api/settings returning 200');
   res.json({ success: true, saved: req.body });
 });
 
