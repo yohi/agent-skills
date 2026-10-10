@@ -3,13 +3,16 @@
 ## Purpose
 
 This directory contains the integration evaluation scenarios for the
-browser-debug-agent Skill. These evals require a real Chrome browser connected
-via the official Chrome DevTools MCP.
+browser-debug-agent Skill. Scenarios A and B require a real Chrome browser
+connected via the official Chrome DevTools MCP. Scenario C is an exception: it
+tests PRECHECK failure when the SSH tunnel is down and does not require a Chrome
+connection.
 
 ## Important policy
 
-- **Do not run these evals** unless a real Chrome instance is reachable at
-  `http://127.0.0.1:9222` through the SSH tunnel.
+- **Do not run Scenarios A or B** unless a real Chrome instance is reachable at
+  `http://127.0.0.1:9222` through the SSH tunnel. Scenario C intentionally runs
+  with the tunnel down.
 - A failure to connect must be reported as `NOT_VERIFIED` or `BLOCKED`. Never
   fabricate `FIX_VERIFIED` or `VERIFIED`.
 

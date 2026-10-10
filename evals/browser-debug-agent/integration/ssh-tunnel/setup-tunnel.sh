@@ -14,30 +14,32 @@ AGENT_SSH_USER="${AGENT_SSH_USER:-$(whoami)}"
 SSH_KEY="${SSH_KEY:-}"
 
 # Fail closed if either forward cannot be established.
-# ExitOnForwardFailure=yes ensures the ssh process exits instead of leaving a
-# half-open tunnel. ServerAlive* keeps the connection alive and detects a dead
-# peer quickly.
-TUNNEL_CMD="ssh -N \
-  -o ExitOnForwardFailure=yes \
-  -o ServerAliveInterval=15 \
-  -o ServerAliveCountMax=3"
+# ExitOnForwardFailure=yes ensures ssh exits instead of leaving a half-open
+# tunnel. ServerAlive* detects a dead peer quickly.
+TUNNEL_CMD=(ssh -N
+  -o ExitOnForwardFailure=yes
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=3)
 
 if [[ -n "${SSH_KEY}" ]]; then
-  TUNNEL_CMD="${TUNNEL_CMD} -i ${SSH_KEY}"
+  TUNNEL_CMD+=(-i "${SSH_KEY}")
 fi
 
-TUNNEL_CMD="${TUNNEL_CMD} \
-  -R 127.0.0.1:9222:127.0.0.1:9222 \
-  -L 127.0.0.1:3000:127.0.0.1:3000 \
-  ${AGENT_SSH_USER}@${AGENT_HOST}"
+TUNNEL_CMD+=(
+  -R 127.0.0.1:9222:127.0.0.1:9222
+  -L 127.0.0.1:3000:127.0.0.1:3000
+  "${AGENT_SSH_USER}@${AGENT_HOST}"
+)
 
 echo "Establishing bidirectional SSH tunnel..."
 echo "  - Agent Host can reach Browser CDP at 127.0.0.1:9222"
 echo "  - Browser Host can reach Agent app at 127.0.0.1:3000"
 echo ""
-echo "Command: ${TUNNEL_CMD}"
+printf 'Command:'
+printf ' %q' "${TUNNEL_CMD[@]}"
+printf '\n'
 echo ""
 echo "Press Ctrl-C to tear down the tunnel."
 echo ""
 
-exec ${TUNNEL_CMD}
+exec "${TUNNEL_CMD[@]}"

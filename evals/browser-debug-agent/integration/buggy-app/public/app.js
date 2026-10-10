@@ -43,8 +43,14 @@ async function renderDashboard() {
   const config = await fetch('/api/config').then(r => r.json());
   const container = document.getElementById('dashboard-content');
 
-  container.innerHTML = `
-    <p>Welcome, <strong>${config.user || 'user'}</strong>!</p>
-    <p>Dashboard loaded successfully.</p>
-  `;
+  const greeting = document.createElement('p');
+  greeting.appendChild(document.createTextNode('Welcome, '));
+  const username = document.createElement('strong');
+  username.textContent = config.user || 'user';
+  greeting.appendChild(username);
+  greeting.appendChild(document.createTextNode('!'));
+
+  const status = document.createElement('p');
+  status.textContent = 'Dashboard loaded successfully.';
+  container.replaceChildren(greeting, status);
 }

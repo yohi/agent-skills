@@ -45,9 +45,11 @@ effect immediately.
 
 - **Config-only fixes** (editing `bug-config.json`): take effect on the next
   request; no server restart needed.
-- **Source-code fixes** (editing `server.js` or `public/app.js`): the agent
-  **must restart** the server before VERIFY, because Node.js loads those files
-  once at startup.
+- **Backend source fixes** (editing `server.js`): restart the server before
+  VERIFY because Node.js loads the file once at startup.
+- **Frontend source fixes** (editing `public/app.js`): reload the browser page
+  before VERIFY so it loads the updated JavaScript. Restart the server as well
+  only if the server-side code or server configuration changed.
 
 This contract prevents the agent from verifying a stale process after applying a
 source fix.

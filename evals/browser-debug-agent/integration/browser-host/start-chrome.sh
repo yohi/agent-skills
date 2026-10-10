@@ -28,8 +28,9 @@ fi
 
 # Ensure the dedicated profile directory exists and is not a personal profile.
 if [[ -d "${PROFILE_DIR}" && ! -f "${PROFILE_DIR}/.browser-debug-agent" ]]; then
-  echo "WARNING: ${PROFILE_DIR} already exists and may contain data." >&2
-  echo "Confirm it is a dedicated automation profile before continuing." >&2
+  echo "ERROR: ${PROFILE_DIR} exists without the browser-debug-agent marker." >&2
+  echo "Choose a dedicated automation profile directory before continuing." >&2
+  exit 1
 fi
 
 mkdir -p "${PROFILE_DIR}"

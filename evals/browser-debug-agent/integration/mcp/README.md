@@ -45,7 +45,9 @@ curl -s http://127.0.0.1:9222/json/version
 # tool call before proceeding.
 ```
 
-If Chrome is reachable, you should see a JSON array of open pages.
+The `/json/version` command returns a JSON object with browser and protocol
+version information. To inspect the open pages, use the MCP client's page-list
+tool after confirming that at least one MCP tool call succeeds.
 
 ## Fail-closed behavior
 
