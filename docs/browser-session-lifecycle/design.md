@@ -33,8 +33,8 @@ Browser Host (Ubuntu Desktop, Tailscale)
 
 One user instruction continues to activate `browser-debug-agent`. The
 Skill governs PRECHECK, BASELINE, REPRODUCE, OBSERVE, DIAGNOSE, permitted FIX,
-VERIFY, and evidence-based REPORT. The OpenCode adapter/controller owns
-ACQUIRE/RELEASE, lease lifetime, authorization and cleanup. Only the
+VERIFY, and evidence-based REPORT. The OpenCode adapter/controller owns ACQUIRE/RELEASE, **every-MCP-call
+session authorization**, lease lifetime and cleanup. Only the
 **official Chrome DevTools MCP** drives Chrome's protocol.
 
 **Architectural correction:** unlike prior Design HEAD `526838aa`, the
@@ -126,9 +126,8 @@ path or label is never authentication.
 ### 3.2 Opaque multiplexed transport
 
 An Agent-side controller listener handles local CDP TCP connections only
-inside the authorized MCP netns. Each connection becomes an authenticated
-logical `CDP` byte stream over the single Agent-originated forced SSH stdio
-connection. Desktop Broker maps it exclusively to the CURRENT epoch's
+inside the authorized MCP netns. Each connection becomes an authenticated logical `CDP` byte stream bound
+to the ACTIVE connection generation on the Agent-originated SSH stdio transport. Desktop Broker maps it exclusively to the CURRENT epoch's
 lease-specific revocable Unix relay, then to Chrome CDP TCP within
 the Chrome netns.
 
@@ -147,7 +146,8 @@ implementation, not a browser MCP wrapper.
 Lease identity is `(verified OpenCode owner, unpredictable epoch,
 Broker-held credentials, owned process identities)`.
 Desktop durable state records GUI Chrome unit/cgroup, Chrome netns,
-UDS relay, data SSH key identity, accepted streams, APP proxy and
+UDS relay, data SSH key identity, **active data-connection generation and
+authenticated connection ID**, accepted streams, APP proxy and
 watchdog. The Broker is the sole authority over CURRENT/REVOKING/REVOKED.
 
 Revocation barrier:
@@ -168,6 +168,23 @@ cannot route A's streams to B because stream requests contain neither a
 destination selector nor authority to switch epoch. An old UDS path is
 never reused. Force-stop and timeout must test **existing WebSockets**
 as well as subsequent CDP connections.
+
+
+### 3.4 Active SSH connection generation within one lease (FDR-030-012)
+
+Desktop Broker is the authority for both **lease epoch** and a separate
+monotonically increasing **data_connection_generation** with authenticated
+SSH connection ID. Broker assigns N+1 only for an authorized same-owner
+reconnect within the CURRENT epoch and fixed recovery deadline. Under
+a lock, Broker fences generation N, disables its stream admission,
+terminates its active/queued CDP WebSockets and APP byte streams, discards
+late N frames, and durably records N+1 as ACTIVE. No overlap of two
+ACTIVE transports is allowed. Old SSH process/key/epoch is insufficient
+to access the new data connection. If N+1 fails, never reactivate N:
+use a new N+2 within the original deadline or revoke the epoch.
+Broker restart preserves this fence. All OPEN/DATA/CLOSE and heartbeat/
+renewal checks require the authenticated CURRENT generation, not PID
+liveness alone. The owning MCP must revalidate connectivity after switch.
 
 ## 4. Explicit Agent-app path across both namespaces (FDR-030-008)
 
@@ -215,10 +232,47 @@ does not count.
 
 ## 5. Agent and Desktop service lifecycle
 
-### 5.1 Acquire and actual MCP READY
 
-1. OpenCode adapter determines authoritative owner from real runtime context
-   and serializes acquire; different owner gets BROWSER_SESSION_BUSY.
+### 5.1 Mandatory OpenCode session-to-MCP authorization (FDR-030-011)
+
+The network namespace restricts direct TCP access; it does **not** prevent
+an unauthorized OpenCode Session B from using Session A's *shared* MCP.
+A trusted pre-dispatch guard must run on **every** Chrome DevTools MCP tool
+operation, before sending anything to the official MCP process. It reads
+the **actual caller session ID** from OpenCode execution context and checks
+the authoritative `(caller_session_id, MCP_instance, CURRENT lease_owner,
+lease_epoch, ACTIVE_data_generation)` tuple under a consistent ownership
+snapshot. Unknown or mismatched IDs, tool aliases, helper/resource
+operations if exposed, concurrent B requests and child/subagent sessions
+with different IDs are rejected, not silently delegated.
+
+Model arguments, session labels or tool-selected MCP names cannot confer
+authority. Reject before dispatch with a typed authorization failure.
+Even after successful tool admission, release and generation fencing
+must close in-flight CDP streams and revoke further access.
+
+Preferred implementation uses installed OpenCode V1
+`tool.execute.before`, **only after proving** that every MCP call
+(including aliases, child sessions and concurrent requests) receives an
+authentic source `sessionID`, thrown denial aborts tool execution,
+and untrusted project hooks/config cannot disable or bypass the guard.
+A per-session MCP with genuinely verified session-scoped registration,
+routing and OS isolation is an alternate design. A separate MCP process
+without call-site isolation is **not** sufficient. If this cannot be
+proven in Spike 0, do not enable MCP/READY.
+
+Test: A owns lease; B calls **A's same MCP** `list_pages`,
+`navigate_page` and another published operation; B receives denial
+before MCP dispatch while A remains usable. Include parallel A/B,
+wrong/missing IDs, aliases, child sessions, guard failure, disabled
+plugin, direct invocation path and call-vs-revoke race. Audit non-secret
+caller ID, call ID, MCP identity, epoch and generation.
+
+### 5.2 Acquire and actual MCP READY
+
+1. Adapter derives authoritative owner from runtime context and **requires
+   non-bypassable pre-dispatch authorization** for all MCP tools; without
+   a proven guard, BLOCKED. Different owner gets BROWSER_SESSION_BUSY.
 2. Agent Broker checks SSH trust, GUI seat, Browser Host identity and
    isolation readiness, plus optional user-authorized APP origin.
 3. Desktop Broker allocates provisional unique CURRENT epoch and private
@@ -228,10 +282,10 @@ does not count.
    lease-owned relay and browser network/app egress.
 5. Start authenticated Agent-originated forced-command SSH stdio transport,
    plus isolated Agent MCP CDP proxy and optional ordinary-netns APP gateway.
-6. The **exact OpenCode-registered official Chrome DevTools MCP process
-   exposed to the owning Skill** must invoke `list_pages` successfully
-   through this lease; record non-secret session/process identity and
-   epoch association. A different diagnostic MCP process does not prove
+6. The **exact Skill-visible OpenCode-registered MCP instance** must
+   invoke `list_pages` **from the lease-owning OpenCode session** through
+   the ACTIVE SSH connection generation. Record nonsecret caller, call,
+   MCP instance, lease epoch and transport generation. A different diagnostic MCP process does not prove
    READY. If app forwarding is enabled, also validate real end-to-end
    Chrome-netns APP response.
 7. Only after these succeed, return READY. Failed stage results in bounded
@@ -239,14 +293,16 @@ does not count.
    CLEANUP_PENDING. The Controller's READY never means a UI scenario
    is VERIFIED/FIX_VERIFIED.
 
-Direct MCP calls before acquire or after release are blocked by controller
-process/network isolation, not only by a Skill instruction.
+Direct MCP calls **before acquire, from Session B while Session A's shared
+MCP is READY, or after release** must be blocked by BOTH runtime per-call
+session authorization and controller transport/network isolation.
 
-### 5.2 Renewals, session events and cleanup
+### 5.3 Renewals, session events and cleanup
 
-Renewal requires CURRENT epoch, live authorized OpenCode session/grace,
-same healthy data SSH process, successful CDP byte roundtrip, and a bounded
-health call from the exact owning MCP. Healthy **management SSH alone**
+Renewal requires CURRENT epoch, live owner/grace, Broker-confirmed
+**ACTIVE SSH connection generation** and authenticated connection ID,
+healthy process, generation-bound CDP roundtrip and bounded call from
+owning session's exact MCP. Healthy **management SSH alone**
 cannot extend a disconnected data lease. On loss: immediately pause
 renewal, enter DEGRADED, begin a non-extendable deadline; optional reconnect
 is allowed only to still-CURRENT epoch before deadline with all checks.
@@ -261,7 +317,7 @@ GUI login; GUI logout revokes existing lease. Distinct Broker supervision
 must itself survive GUI manager exit or recover under system-level
 service supervision. It never destroys unowned/unknown Chrome profiles.
 
-### 5.3 Finalization order
+### 5.4 Finalization order
 
 ```text
 Skill activation → ACQUIRE → PRECHECK → BASELINE → REPRODUCE
@@ -291,6 +347,9 @@ CLEANUP_PENDING separately from browser verification outcome.
 | **FDR-030-008** | Live Agent ordinary-netns 127.0.0.1:3000 app delivers 200/known body to real Chrome in Desktop netns; forbidden target rejected |
 | **FDR-030-009** | With **data and management keys**, deny all SSH -N -L/-R/-D/-W, direct TCP/UDS, SFTP, shell, arbitrary exec, PTY, X11/agent; forced ssh -T stdio works |
 | **FDR-030-010** | Chrome UID cannot read Broker key/capability/journal, modify tombstone, open Broker IPC, ptrace authority or reuse other epoch |
+| **FDR-030-011** | Session A READY; B's calls to same MCP `list_pages`/`navigate_page`/third tool are denied before dispatch, including concurrent/alias/child attempts |
+| **FDR-030-012** | Within same epoch, keep old SSH N alive, connect N+1; N's streams, WebSockets, delayed frames and renewals fail, no dual ACTIVE generation |
+| **FDR-030-013** | Requirements §8 and Spike 0 contain only forced SSH stdio, Broker UDS and independent Broker watchdog as normative contract |
 | Stdio transport reliability | Real Chrome DevTools MCP long-lived WS and concurrent APP HTTP over binary framing; failure/backpressure/truncation bounded |
 | Browser networking | Chrome netns DNS/HTTPS egress; optional APP channel correct; no CDP exposure to shared loopback |
 | Existing Integration A/B/C | A/B same-scenario FIX_VERIFIED evidence unaffected; C fail-closed NOT_VERIFIED/BLOCKED |
@@ -306,18 +365,18 @@ are required; mocked unit tests are insufficient.
 
 **Design is DRAFT / Implementation NOT_AUTHORIZED.**
 
-- **Spike 0, executable contracts**: installed OpenCode V1 hooks and
-  same-instance MCP registration; actual SSH forced-command/no-forwarding
-  behavior and per-epoch key mapping; actual binary stdio transport
-  feasibility; GUI launcher cross-UID systemd startup; secret/journal
-  isolation; reaper independence; Chrome namespace egress and Agent
-  ordinary-netns APP HTTP access.
+- **Spike 0, executable contracts**: prove installed OpenCode V1
+  **per-call authenticated session gating on same shared MCP** (including
+  child sessions/alias/bypass), same-MCP identity; SSH forced stdio,
+  **same-epoch connection-generation fencing**, key/epoch mapping,
+  binary transport, GUI launcher, secrets, independent Broker reaper,
+  network isolation and Agent ordinary-netns app access.
 - **Stage 1 — Desktop**: separate Broker UID, restricted SSH accounts,
   revocable relay, GUI launcher, namespaces and durable watchdog.
 - **Stage 2 — Agent**: trusted Broker service, SSH transport, CDP proxy,
   ordinary-netns APP gateway, health and epoch fencing.
-- **Stage 3 — OpenCode**: adapter/session events, same MCP instance,
-  direct-tool authorization and durable finalization.
+- **Stage 3 — OpenCode**: trusted per-call session-to-MCP/epoch/generation
+  authorization, aliases/child routing, events and durable finalization.
 - **Stage 4 — Skill**: minimal integration instructions plus reference,
   preserving existing browser-debugging semantics.
 - **Stage 5 — Acceptance**: all negative cases above and historical A/B/C.

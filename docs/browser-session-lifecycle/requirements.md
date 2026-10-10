@@ -42,18 +42,18 @@ does **not** implement CDP, Chrome process control, or the SSH transport.
 | BSL-004 | Browser Host starts **headful** Chrome in the active, authorized graphical login session, using an isolated automation-only profile. | Browser display/session and profile identity |
 | BSL-005 | Agent-only MCP netns exposes isolated `127.0.0.1:9222` via an owned byte proxy; authenticated Broker selects a lease-unique Desktop UDS relay. No client-chosen SSH `-L` UDS path. | Namespace and stale-tunnel denial |
 | BSL-006 | Optional APP channel connects Desktop Chrome-netns gateway to a trusted Agent gateway in the Agent **ordinary** netns (`127.0.0.1:3000` example); no assumed loopback shared with SSH/MCP namespace. | Real Chrome HTTP 200/known app body and wrong-port denial |
-| BSL-007 | READY requires owned SSH, intended isolated Chrome, and `list_pages` from the **exact OpenCode-managed MCP instance exposed to the Skill**, bound to the current lease epoch. | Same-instance MCP call and epoch identity trace |
+| BSL-007 | READY requires owning-session-authorized `list_pages` on the exact Skill-visible MCP; **every** browser MCP call must match trusted OpenCode caller, CURRENT lease epoch, MCP instance and ACTIVE SSH data generation. | Session B denial with A READY, instance/epoch/generation trace |
 | BSL-008 | Repeated acquire by the same owner is idempotent and does not spawn another Chrome/tunnel. | Duplicate calls, same lease |
 | BSL-009 | v1 permits one exclusive browser owner per Browser Host; another session gets `BROWSER_SESSION_BUSY` without stealing it. | Concurrent acquisition test |
 | BSL-010 | A release stops **only** the authenticated lease's tunnel and Chrome; no `pkill ssh`, broad service stop, or manipulation of personal Chrome. | Process/unit ownership assertions |
 | BSL-011 | Adapter persists the result and attempts release **before emitting the final report**; `session.deleted` releases, `session.idle` starts bounded grace. LLM prose `finally` is not an execution guarantee. | Ordered event traces, skipped-release fallback |
 | BSL-012 | Agent crash, tunnel loss, forgotten release or Desktop manager failure must revoke Desktop CDP ingress and accepted streams, then reap only owned Chrome without an Agent callback. | Kill -9, tunnel-only failure, timeout and manager restart tests |
-| BSL-013 | Agent/Desktop restarts reconcile durable lease epochs/tombstones; revoked generations cannot be reactivated or adopted, even if an old SSH process remains. | Crash/restart replay and fencing tests |
+| BSL-013 | Agent/Desktop restarts reconcile durable lease epochs, active SSH **connection generations**, authenticated transport identity and tombstones; stale connections/frames never regain authority. | Restart and same-epoch reconnect fencing tests |
 | BSL-014 | Chrome unavailability, GUI not logged in, session lock/no access, target app unavailable, port occupied, SSH failure and MCP failure yield typed errors and browser `NOT_VERIFIED`/`BLOCKED`. | Negative scenarios; no browser fallback |
 | BSL-015 | Caller can inspect lease status without reading personal browser state. | `status` contract assertions |
 | BSL-016 | Explicit release is idempotent and reports partial cleanup as `CLEANUP_PENDING` until confirmed. | Repeated release, failures |
 | BSL-017 | A browser-verified outcome requires the original Skill evidence and same-scenario browser recheck; successful acquisition alone never means `VERIFIED`. | A/B/C regression evidence |
-| BSL-018 | OpenCode adapter may change independently of the OS-neutral controller. | Mock adapter and controller tests |
+| BSL-018 | OpenCode adapter is replaceable but must prove non-bypassable caller-session authorization for **every** MCP dispatch in the installed version; if unproven, BLOCKED. | Runtime negative/tool-hook tests |
 
 ## 4. Security / reliability constraints
 
@@ -118,14 +118,25 @@ does **not** implement CDP, Chrome process control, or the SSH transport.
 
 ## 8. Decisions requiring evidence before final approval
 
-- The installed OpenCode version/hook payloads, whether direct MCP tool calls
-  can be gated, and whether MCP initialization tolerates an initially missing
-  CDP endpoint.
-- The dedicated GUI UID, GNOME user service environment, isolated Chrome
-  network egress and access to the intended graphical session.
-- Restricted SSH commands, lease-specific Unix socket forwarding, Agent MCP
-  confinement, Desktop user-manager lingering, and cleanup-on-restart.
-- Timeout/heartbeat/idle grace defaults after two-host measurements.
+- Verify the **installed OpenCode V1** gives a trustworthy originating
+  `sessionID` for each browser MCP tool call, including aliases, helpers,
+  nested sessions and concurrent calls, and that failed authorization
+  prevents actual dispatch. If reliable tool hooks are unavailable, prove
+  true per-session MCP publication **and routing isolation**; otherwise BLOCKED.
+- Verify READY and later browser actions use the same MCP process, tied to
+  CURRENT lease owner, epoch and Broker ACTIVE SSH connection generation.
+- Verify Agent-originated SSH **forced-command stdio** (not native
+  `-L/-R/-D/-W` TCP or Unix socket port forwarding), authenticated
+  key↔epoch mapping and **Broker-mediated** lease UDS/APP stream selection.
+- Verify same-epoch reconnect fences old SSH connection generations
+  including already-open streams, late DATA frames and heartbeat.
+- Verify Agent ordinary-netns APP gateway, Chrome namespace egress,
+  separate Chrome GUI/SSH transport/Broker UIDs, fixed-operation launcher
+  and real active desktop GUI seat. Independently supervised **Broker
+  watchdog** owns revocation and durable replay; GUI user-manager linger
+  only supports GUI service lifetime and is not the watchdog guarantee.
+- Validate heartbeat, disconnect deadline, TTL and idle grace in real
+  two-host tests before selecting defaults.
 
 No production implementation is authorized by this draft.
 
@@ -160,9 +171,9 @@ Unix socket and Broker-management attempts fail, including same-login tests.
 ### BSL-021 — Heartbeat health gates and bounded reconnect (003)
 
 Renewal requires: current unrevoked epoch, rightful OpenCode owner active
-or inside allowed idle grace, owned tunnel process identity alive, real CDP
-connectivity through **its own** lease socket, and a bounded health call
-from the exact MCP instance. Successful management SSH by itself is
+or in bounded grace, **Broker-confirmed ACTIVE data-connection generation**
+and matching authenticated SSH connection identity, owned process alive,
+CDP connectivity through that connection, and a same-session MCP health call. Successful management SSH by itself is
 insufficient. When tunnel health fails, immediately suspend renewals and
 declare DEGRADED; bounded reconnect is allowed only to the same unrevoked
 epoch, without shifting to another endpoint. A fixed, non-extendable recovery
@@ -208,11 +219,12 @@ release failure; never rely on a tool invocation after the final reply.
 
 ### BSL-025 — Same MCP instance and lifecycle gating (007)
 
-READY requires `list_pages` through the exact OpenCode-registered official
-Chrome DevTools MCP instance later used by the owning Skill, not a second
-process spawned just for diagnostics. Bind MCP process/session identity to
-the lease epoch and revoke its CDP access when that epoch ends. Reject
-unguarded direct browser MCP calls before acquire or after release.
+READY requires `list_pages` from the actual OpenCode-registered Skill MCP
+called by the owning OpenCode session, not a probe. Bind **each** MCP call
+to verified caller session, registered instance, CURRENT epoch and ACTIVE
+data generation, reject other sessions **before dispatch** and revoke
+existing streams when access ends. Network isolation does not authorize a
+shared MCP's tool callers.
 The installed OpenCode version's hooks, stdio registration, initialization
 order and client routing must be demonstrated by a contract spike.
 
@@ -221,7 +233,7 @@ READY must fail. Compare instance/epoch identity for probe and actual calls.
 
 ### BSL-026 — Implementation authorization gate
 
-All ten corrections must pass independent Design Review and the real
+All thirteen corrections must pass independent Design Review and the real
 two-host contract spike before implementation is authorized. Inability to
 prove the host GUI/namespace/egress model, localhost CDP isolation,
 SSH forced-command authentication, Broker separation, Agent APP routing,
@@ -282,7 +294,7 @@ are rejected. Test filesystem owner/mode, namespace/mount, inherited
 FDs, peer-credentials and process separation. Broker continues cleanup
 when GUI manager exits.
 
-### BSL-030 — Spike and authorization gate (008–010)
+### BSL-030 — Spike and authorization gate (008–013)
 
 Requirements and design do not prove implementation feasibility. Independent
 Fresh Review is required, followed by executable Spike 0 on both actual
@@ -291,3 +303,59 @@ mapping, binary HTTP/WebSocket, Agent ordinary-netns APP reachability,
 Browser Chrome netns egress, GUI cross-UID launcher, Broker authority
 separation and OpenCode same-MCP identity. If any cannot be proven,
 DESIGN_BLOCKED; no insecure loopback/UDS/general forwarding fallback.
+
+### BSL-031 — Enforce session ownership on all MCP calls (FDR-030-011)
+
+Every Chrome DevTools MCP tool invocation MUST be authorized *before its
+MCP request is dispatched*. A trusted OpenCode runtime source, not model
+arguments, supplies calling session ID. Atomically require: caller equals
+CURRENT lease owner; target is the exact registered MCP instance; lease epoch
+is CURRENT, transport generation ACTIVE and browser access authorized.
+Apply to all browser tools, aliases, MCP resources/helpers if registered,
+parallel calls and distinct child/subagent sessions; no implicit inherited
+owner privileges. Unrecognized tools, missing identity, unguarded/bypassing
+entrypoints or failure to install the mandatory guard deny access. A shared
+MCP process's isolated TCP listener does NOT by itself authorize a second
+OpenCode session to call that MCP. Revoke in-flight streams on lease loss.
+
+Preferred: installed OpenCode V1 `tool.execute.before` with trustworthy
+`sessionID` and tested throw-aborts-dispatch semantics plus protected hook
+order. Alternative: proven truly **per-session MCP publication and routing**
+with equivalent enforcement. If both unavailable, do not expose MCP and
+return BLOCKED; upstream code alone is not execution proof.
+
+Acceptance: while A owns READY, B calls A's **same** MCP `list_pages`,
+`navigate_page` and another operation; each fails before MCP activity and
+A still works. Test missing/forged IDs, simultaneous A/B, MCP tool aliases,
+subagent sessions, guard disabled/bypassed/overridden, and release vs call
+race. Record non-secret call/session/MCP/epoch/generation identity.
+
+### BSL-032 — Fencing same-epoch SSH reconnects (FDR-030-012)
+
+Desktop Broker stores the durable, monotonically incremented
+`(lease_epoch, active_data_generation, authenticated_connection_id)`.
+Each stream frame and renew requires matching authenticated ACTIVE
+generation, not just a CURRENT epoch or living SSH PID. Reconnection must
+first durably fence generation N, reject its queued/new frames and close
+its existing APP/CDP streams/WebSockets; only then may N+1 become ACTIVE.
+Two data transports cannot simultaneously operate, even if old SSH
+remains running. A failed N+1 never reactivates N; only a new generation
+within unchanged lease expiry/loss deadline may retry, or epoch expires.
+New connection requires same-owner authorization and fresh MCP/browser
+health. Reject old generation heartbeat or release authority.
+
+Acceptance: hold old SSH N alive when N+1 connects in same epoch;
+old new streams, delayed DATA, existing WS and heartbeats all fail.
+Inject concurrent reconnect, failed N+1 and Broker restart/replay.
+
+### BSL-033 — Consistency of transport and watchdog (FDR-030-013)
+
+Normative design and Spike 0 use *only* authenticated SSH forced-command
+stdio transport and **Broker-selected** lease UDS/APP streams, not
+`PermitOpen` path allowlisting or generic OpenSSH forwarding. Broker
+watchdog has independent service supervision and durable revocation;
+GUI user-manager linger is not the primary cleanup guarantee.
+
+Acceptance: inspect §8, Design and Spike 0 for any contradictory live
+SSH forwarding, ownership, UID or watchdog contracts. Historical
+superseded designs may be mentioned only as explicit non-goals.
