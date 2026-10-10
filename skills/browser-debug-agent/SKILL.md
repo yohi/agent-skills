@@ -61,6 +61,7 @@ future extension.
 
 ```text
 PRECHECK
+  → BASELINE
   → REPRODUCE
   → OBSERVE
   → DIAGNOSE
