@@ -43,12 +43,6 @@ async function renderDashboard() {
   const config = await fetch('/api/config').then(r => r.json());
   const container = document.getElementById('dashboard-content');
 
-  if (config.dashboardThrows) {
-    // Intentional bug: throw after clearing the container, leaving a blank screen.
-    container.textContent = '';
-    throw new Error('Dashboard render failed: authState is undefined');
-  }
-
   container.innerHTML = `
     <p>Welcome, <strong>${config.user || 'user'}</strong>!</p>
     <p>Dashboard loaded successfully.</p>
