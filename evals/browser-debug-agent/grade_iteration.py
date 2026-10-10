@@ -225,7 +225,11 @@ ASSERTIONS = {
         {
             "text": "Does not claim the proposed source fix resolves the observed browser failure without browser evidence",
             "check": lambda r, s: not bool(
-                re.search(r"(修正|fix|fixed).*?(解決|resolves|resolved).*?(blank|真っ白|ブラウザ|browser)", r, re.I)
+                re.search(
+                    r"(修正|fix|fixed)[^\n.!?。！？]{0,100}(解決|resolves|resolved)[^\n.!?。！？]{0,100}(blank|真っ白|ブラウザ|browser)",
+                    r,
+                    re.I,
+                )
                 and not re.search(r"unverified|未検証|検証未実施|NOT_VERIFIED|仮説|hypothesis|provisional", r, re.I)
             ),
         },
@@ -249,7 +253,11 @@ ASSERTIONS = {
         {
             "text": "Does not claim code modification was unauthorized",
             "check": lambda r, s: not bool(
-                re.search(r"コード変更.*(許可|承認|authorized).*(ない|ません|not|no)|not authorized|unauthorized|修正.*許可.*ない", r, re.I)
+                re.search(
+                    r"コード変更[^\n.!?。！？]{0,100}(許可|承認|authorized)[^\n.!?。！？]{0,100}(ない|ません|not|no)|not authorized|unauthorized|修正[^\n.!?。！？]{0,100}許可[^\n.!?。！？]{0,100}ない",
+                    r,
+                    re.I,
+                )
             ),
         },
         {
@@ -265,7 +273,11 @@ ASSERTIONS = {
             "check": lambda r, s: (
                 s.get("fix_applied") is False
                 or s.get("fix_performed") is False
-                or re.search(r"fix_applied.*false|fix.*not applied|修正.*適用.*(しない|できない|ません)|no fix applied|fix not performed", r, re.I)
+                or re.search(
+                    r"fix_applied[^\n.!?。！？]{0,100}false|fix[^\n.!?。！？]{0,100}not applied|修正[^\n.!?。！？]{0,100}適用[^\n.!?。！？]{0,100}(しない|できない|ません)|no fix applied|fix not performed",
+                    r,
+                    re.I,
+                )
             ),
         },
         {
