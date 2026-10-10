@@ -19,3 +19,20 @@ app and scripts use paths relative to their own files, so the internal
 
 Evaluation definitions are retained; per-run reports, scores, timing data, and
 benchmarks are not stored in this repository.
+
+## Re-running integration scenarios
+
+Keep the intentional bugs in `integration/buggy-app`. The fixture-health
+tests are part of the versioned evaluation definition:
+
+```bash
+cd evals/browser-debug-agent/integration/buggy-app
+npm ci
+npm run fixture:reset
+npm test
+```
+
+Perform actual bug fixes in fresh, isolated worktrees. The
+`test:regression:settings` / `test:regression:dashboard` scripts are
+**post-fix** checks and are not included in the baseline fixture-health run.
+Real-browser evidence remains required to claim `FIX_VERIFIED`.

@@ -43,6 +43,12 @@ async function renderDashboard() {
   const config = await fetch('/api/config').then(r => r.json());
   const container = document.getElementById('dashboard-content');
 
+  if (config.dashboardThrows) {
+    // Intentional fixture: throw after clearing the dashboard.
+    container.textContent = '';
+    throw new Error('Dashboard render failed: authState is undefined');
+  }
+
   const greeting = document.createElement('p');
   greeting.appendChild(document.createTextNode('Welcome, '));
   const username = document.createElement('strong');

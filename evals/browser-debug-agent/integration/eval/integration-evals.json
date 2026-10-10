@@ -10,18 +10,20 @@
         "REPRODUCE: open /settings.html, click Save button",
         "OBSERVE: Network tab shows POST /api/settings returning 500",
         "DIAGNOSE: root cause is backend returning 500 on save",
-        "FIX: edit buggy-app/server.js or bug-config.json to make /api/settings return 200",
+        "FIX: minimally correct buggy-app/server.js with settingsSaveFails=true (changing bug-config.json alone is not accepted)",
         "VERIFY: reload /settings.html, click Save again, confirm success",
         "REPORT: FIX_VERIFIED with evidence"
       ],
       "expectations": [
+        "Starts from a clean, independent baseline worktree and verifies the intentional bug before modifying source",
         "PRECHECK confirms browser and app reachable",
         "Reproduces save failure by clicking Save button",
         "Observes Network failure (POST /api/settings 500)",
         "Identifies backend as root cause",
         "Applies a minimal source fix",
         "Re-runs the same scenario in browser and confirms success",
-        "Reports FIX_VERIFIED only after browser re-verification"
+        "Reports FIX_VERIFIED only after browser re-verification",
+        "Keeps the active bug flag true through real-Chrome post-fix verification"
       ]
     },
     {
@@ -32,19 +34,21 @@
         "PRECHECK: real Chrome reachable, app reachable",
         "REPRODUCE: login and navigate to dashboard, observe blank screen",
         "OBSERVE: Console shows JavaScript exception, DOM is empty/missing content",
-        "DIAGNOSE: root cause is renderDashboard throwing because authState is undefined",
-        "FIX: edit buggy-app/public/app.js to handle auth state correctly",
+        "DIAGNOSE: renderDashboard intentionally clears the container and throws when dashboardThrows=true; link exception to empty DOM and source branch",
+        "FIX: minimally correct buggy-app/public/app.js with dashboardThrows=true (changing bug-config.json alone is not accepted)",
         "VERIFY: reload login flow, dashboard renders correctly",
         "REPORT: FIX_VERIFIED with evidence"
       ],
       "expectations": [
+        "Starts from a clean, independent baseline worktree and verifies the intentional bug before modifying source",
         "PRECHECK confirms browser and app reachable",
         "Reproduces login → blank dashboard flow",
         "Observes Console exception and empty DOM",
         "Identifies frontend runtime error as root cause",
         "Applies a minimal source fix",
         "Re-runs the same scenario in browser and confirms dashboard renders",
-        "Reports FIX_VERIFIED only after browser re-verification"
+        "Reports FIX_VERIFIED only after browser re-verification",
+        "Keeps the active bug flag true through real-Chrome post-fix verification"
       ]
     },
     {
