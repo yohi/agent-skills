@@ -38,10 +38,10 @@ does **not** implement CDP, Chrome process control, or the SSH transport.
 | --- | --- | --- |
 | BSL-001 | Explicit browser-related prompts activate the existing Skill; non-browser work does not start Chrome. | Invocation and negative activation tests |
 | BSL-002 | Skill can call `browser_session.acquire`, `status`, `release` exposed through an OpenCode integration. | Real OpenCode tool calls |
-| BSL-003 | Agent Host initiates SSH to Browser Host via Tailscale without Browser Host initiating a tunnel. | Real 2-host connection traces |
+| BSL-003 | Agent initiates a lease-bound **SSH -T stdio** transport over Tailscale; Desktop never initiates SSH. Data key rejects generic OpenSSH forwarding. | 2-host transport trace and negative forwarding tests |
 | BSL-004 | Browser Host starts **headful** Chrome in the active, authorized graphical login session, using an isolated automation-only profile. | Browser display/session and profile identity |
-| BSL-005 | The Agent-local `127.0.0.1:9222` exists only inside the authorized MCP isolation domain. SSH forwards to a *lease-unique, non-reused* Desktop Unix socket relay, never a shared Desktop CDP TCP port. | Namespace inspection, socket identity, stale-tunnel denial |
-| BSL-006 | When the test application runs on Agent Host, provide an optional Browser-Host-local reverse forward to the Agent app loopback endpoint; do not create it otherwise. | Host sees expected app and forwarding absence when unnecessary |
+| BSL-005 | Agent-only MCP netns exposes isolated `127.0.0.1:9222` via an owned byte proxy; authenticated Broker selects a lease-unique Desktop UDS relay. No client-chosen SSH `-L` UDS path. | Namespace and stale-tunnel denial |
+| BSL-006 | Optional APP channel connects Desktop Chrome-netns gateway to a trusted Agent gateway in the Agent **ordinary** netns (`127.0.0.1:3000` example); no assumed loopback shared with SSH/MCP namespace. | Real Chrome HTTP 200/known app body and wrong-port denial |
 | BSL-007 | READY requires owned SSH, intended isolated Chrome, and `list_pages` from the **exact OpenCode-managed MCP instance exposed to the Skill**, bound to the current lease epoch. | Same-instance MCP call and epoch identity trace |
 | BSL-008 | Repeated acquire by the same owner is idempotent and does not spawn another Chrome/tunnel. | Duplicate calls, same lease |
 | BSL-009 | v1 permits one exclusive browser owner per Browser Host; another session gets `BROWSER_SESSION_BUSY` without stealing it. | Concurrent acquisition test |
@@ -59,11 +59,11 @@ does **not** implement CDP, Chrome process control, or the SSH transport.
 
 | ID | Constraint |
 | --- | --- |
-| BSL-S01 | One pre-provisioned dedicated non-admin GUI account owns the graphical login, restricted SSH principal, Chrome user service, host relay, lease store and watchdog. No general SSH shell, agent/X11 forwarding or personal Chrome use. A narrowly provisioned privileged namespace bootstrap is permissible only when technically required and must never execute arbitrary model-provided commands. |
-| BSL-S02 | Loopback binding is not authorization. Desktop Chrome CDP TCP must reside inside a lease-specific network namespace; a revocable, lease-specific Unix socket relay is the only ingress for SSH. Agent CDP TCP and official MCP must run in an isolated namespace/security domain inaccessible to ordinary Agent/test processes. If isolation cannot be proven, fail closed. |
-| BSL-S03 | Desktop management command supports only allowlisted `start/status/renew/release` operations, typed inputs, and bounded resources; arbitrary shell commands are outside the interface. |
-| BSL-S04 | Controller generates unguessable lease credentials outside LLM context; owner/session IDs alone are not sufficient to stop resources. Redact keys/tokens, cookies and URLs containing secrets. |
-| BSL-S05 | Independent Desktop watchdog must revoke ingress, expire leases and durably replay cleanup. The dedicated systemd user manager must survive GUI logout via linger or a proven equivalent; logged-out mode is cleanup-only. `trap EXIT` and session callbacks alone are insufficient. |
+| BSL-S01 | Dedicated GUI/Chrome UID, trusted Broker UID, and restricted SSH transport UID are distinct. A narrowly provisioned, authenticated fixed-operation privileged launcher performs only approved cross-UID Chrome/namespace operations. No arbitrary shell/sudo/X11 or agent forwarding.  |
+| BSL-S02 | CDP endpoints on Desktop and Agent MCP reside in distinct isolated namespaces. Desktop Broker maps authenticated stream type/epoch to revocable UDS relay, not general SSH TCP/UDS forwarding. Other local processes including same-login tests cannot reach CDP.  |
+| BSL-S03 | Separate control and data principals; allowlisted management verbs only. Data SSH has forced-command binary stdio and **all SSH generic forwarding**, arbitrary exec/shell, SFTP, PTY, X11 and agent forwarding disabled.  |
+| BSL-S04 | Trusted Broker (separate UID from Chrome and SSH transport) owns epoch capability, SSH key mapping, lease state and durable journal. Never place bearer credentials in LLM context or argv/logs; a lease label is not an authorization token.  |
+| BSL-S05 | Independent Broker-owned watchdog enforces revocation and durable recovery independent of the GUI account's user manager; linger does not create a GUI session. Callbacks and traps are not the only recovery path.  |
 | BSL-S06 | A port already held by a foreign service, unknown CDP browser, or existing personal Chrome is not reused or terminated. Fail closed. |
 | BSL-S07 | Every Chrome profile is session-owned and private (0700). Cleanup may erase only a controller-created, verified owned ephemeral profile; never delete an inherited or personal profile. |
 | BSL-S08 | Session IDs and host aliases supplied by the model are not authoritative; the adapter derives ownership from verified OpenCode execution context and server-side lease state. |
@@ -133,42 +133,29 @@ No production implementation is authorized by this draft.
 
 ### BSL-019 — Lease-scoped revocation and generation fencing (001)
 
-Each Desktop lease owns a never-reused random epoch and a uniquely named
-Unix-domain socket under an owner-controlled private path. SSH `-L` targets
-that exact remote socket; it must never target a recyclable Desktop
-`127.0.0.1:9222` listener. On expiry or release Desktop authority atomically
-marks the epoch REVOKED and rejects new relay connections, closes all
-active and pending relay streams, closes/unlinks the socket, and stops Chrome.
-Re-acquisition B cannot begin until A's ingress-revocation barrier finishes.
-Retired paths/generations must never be recreated, including after reboot.
+Each lease has a never-reused epoch and Broker-owned, private Unix relay endpoint.
+Agent→Desktop SSH transports opaque streams via **forced-command stdio**
+instead of arbitrary `-L` paths; Broker chooses the UDS only from an
+authenticated CURRENT epoch. Revocation durably fences epoch, rejects new
+streams, forcibly closes accepted WebSockets, stops only owned Chrome and
+closes/unlinks UDS. Acquire B is blocked until A's revocation barrier completes.
 
-Test: keep SSH Tunnel A alive after A expires, acquire B, and prove A's
-existing WebSockets *and* fresh requests cannot reach Chrome B. Simulate
-expiration/acquire races and restarts; expired credentials never revive.
+Test: surviving Tunnel A and active WebSockets cannot contact successor B;
+inject expire/acquire races and Broker restart; revoked epochs never revive.
 
 ### BSL-020 — Same-host CDP security on both endpoints (002)
 
-Threat model explicitly distrusts ordinary application/test processes,
-other OpenCode sessions and unrelated local processes, even on the same
-machine. Sharing a user login or loopback interface alone does not authorize
-CDP. Trusted components: kernel/host admin and a narrowly pre-provisioned,
-privilege-separated controller; compromise of root/kernel or theft of the
-controller's restricted SSH key is out of scope.
+Same-login Agent/test subprocesses, other OpenCode sessions and local Desktop
+non-controller processes are untrusted, even when loopback is bound.
+Chrome CDP resides in a per-lease Chrome netns; owning official MCP and
+Agent byte proxy reside in a private MCP domain. Desktop Broker mediates
+opaque CDP streams via a revocable lease UDS. No direct TCP/UDS SSH forwarding.
+Trusted Broker credentials/state must be protected under separate UID and
+restricted mount/IPC domain, never just 0700 in the Chrome UID.
+Browser network/APP egress needs separately tested routes.
 
-Desktop's Chrome+CDP TCP live in a lease-specific isolated network namespace.
-A revocable Unix socket relay inside that domain is reachable by the restricted
-SSH endpoint only. Isolate Agent's SSH local-forward listener and the *same
-official MCP instance* in a separate local network/credential domain: ordinary
-agent shell/test processes must not connect to that TCP listener. Establish
-a tested Internet and optional Agent-local application route for Chrome; mere
-`PrivateNetwork=yes` with loopback-only networking is insufficient to browse
-a real website. A limited pre-provisioned privileged setup component is
-allowed for namespace/veth/NAT only; it cannot accept arbitrary commands.
-
-Test: with an active lease, unauthorized Agent and Desktop processes cannot
-connect to either CDP TCP or the Unix socket, but the owning MCP can. Test
-same-login untrusted Agent subprocesses, WebSocket upgrade, and route isolation.
-Fail BLOCKED rather than downgrading to loopback-only.
+Test: authorized MCP succeeds; all unauthorized host/agent CDP HTTP/WS,
+Unix socket and Broker-management attempts fail, including same-login tests.
 
 ### BSL-021 — Heartbeat health gates and bounded reconnect (003)
 
@@ -188,32 +175,24 @@ interval, and the Skill cannot claim verified browser results.
 
 ### BSL-022 — Dedicated GUI user / principal relationship (004)
 
-A pre-provisioned dedicated non-admin GUI user (symbolic name `browser-agent`)
-owns the Desktop login, systemd user manager, Chrome service, relay, lease
-database and reaper. Restricted SSH keys authenticate as *that same UID*,
-with a forced allowlisted command for management and separately constrained
-forwarding authorization. The restricted account must not be shared with
-test workloads or a personal Chrome profile. The Chrome process is additionally
-isolated from the relay socket in its mount/access domain. A different GUI
-UID vs SSH UID is not implicitly supported; it requires a separately reviewed,
-authenticated cross-UID broker.
+Dedicated GUI account `browser-agent` owns the graphical seat and Chrome
+user unit. **Different** Broker UID `browser-control` owns lease secrets,
+journal, relay and watchdog. Separate `browser-transport` SSH UID runs only
+restricted forced command. A pre-provisioned fixed-operation privileged
+launcher performs authenticated cross-UID GUI/namespace setup without arbitrary
+shell. SSH user manager is not assumed to be GUI user manager.
 
-Test: actual Desktop UID/seat, SSH command UID, Chrome UID, namespace and
-reaper UID match the declared boundaries, without running Chrome as root.
+Test: verify actual SSH/Broker/Chrome/launcher UIDs, IPC authorization and
+GUI seat; no Chrome access to Broker authority.
 
 ### BSL-023 — Watchdog lifetime and GUI logout (005)
 
-Pre-provision `loginctl enable-linger` or prove an equivalent cleanup supervisor;
-lingering preserves the user manager, **not** a graphical login. On GUI logout
-or loss of the intended seat, deny acquisitions and revoke existing sessions.
-Use private durable REVOKING/CLEANUP_PENDING tombstones and a reaper that
-reconciles them after user-manager restart/reboot. No successor lease is
-allowed until prior ingress was disabled and owned processes were confirmed
-stopped. If user-manager shutdown leaves processes running, an independently
-effective fail-closed shutdown mechanism is required and must be proven.
+Independent Broker-UID watchdog owns durable tombstones and replays revocation
+after GUI user-manager stop/restart, logout and reboot. GUI linger preserves
+manager only, not a graphical login. Logout blocks fresh acquisition and
+revokes prior data channels. B cannot acquire until old ingress is fenced.
 
-Test: logout, re-login, stop/start the user manager, reboot/reaper restart;
-the old CDP is not usable and incomplete cleanup resumes safely.
+Test: manager shutdown/re-login/Broker restart leave no orphan usable CDP.
 
 ### BSL-024 — Finalize, release, then emit (006)
 
@@ -242,8 +221,73 @@ READY must fail. Compare instance/epoch identity for probe and actual calls.
 
 ### BSL-026 — Implementation authorization gate
 
-All seven corrections must pass independent Design Review and the real
+All ten corrections must pass independent Design Review and the real
 two-host contract spike before implementation is authorized. Inability to
 prove the host GUI/namespace/egress model, localhost CDP isolation,
-SSH socket forwarding permissions, OpenCode gating/instance identity, or
+SSH forced-command authentication, Broker separation, Agent APP routing,
+OpenCode gating/instance identity, or
 manager cleanup is DESIGN_BLOCKED, not a reason to reduce security requirements.
+
+### BSL-027 — Agent ordinary-netns APP gateway (FDR-030-008)
+
+When an Agent-loopback app is explicitly requested, a separate trusted Agent
+APP gateway in the **ordinary Agent netns** connects to a single configured,
+validated endpoint (e.g. `127.0.0.1:3000`). Desktop Chrome has a per-lease
+APP listener **inside Chrome netns**. Opaque APP byte streams travel via
+the same Agent-originated SSH stdio transport to Agent Broker and this
+ordinary-netns gateway. The isolated MCP/SSH namespace's own loopback is
+not the application; `ssh -R` is not an implicit solution. Broker, not the
+browser, model or SSH peer, selects target host/port. If not authorized no
+APP channel/listener exists. Ordinary HTTP redirects do not authorize a new
+gateway origin.
+
+Acceptance: actual Agent app in ordinary netns returns HTTP 200 plus a
+known body to real Chrome in Desktop netns. Validate denied wrong port,
+missing app, unrelated Agent network services, WebSocket and redirects;
+ensure CDP isolation is unchanged.
+
+### BSL-028 — SSH destination authorization (FDR-030-009)
+
+Do **not** rely on `PermitOpen`/`permitopen` to authorize a Unix
+socket path. Data SSH authenticates a per-lease key mapped **server-side**
+to CURRENT epoch and executes one forced binary-clean stdio bridge
+(`ssh -T`). Server config **disables all** TCP and StreamLocal local/
+remote forwarding, `-L/-R/-D/-W`, arbitrary exec, shell, subsystem/SFTP,
+PTY, agent/X11 forwarding. `ForceCommand` alone cannot gate `ssh -N`
+port-forward channels. Control key/principal is separate and likewise has
+no generic forwarding. Broker accepts bounded `CDP` and approved `APP`
+opaque stream types, not arbitrary UDS paths/host/port. Bridge implements
+no CDP parsing; binary framing handles concurrent streams/backpressure.
+
+Acceptance: actual OpenSSH `sshd -T -C` and malicious connection matrix
+for data/control keys deny every unwanted forwarding/exec kind; only
+authenticated forced stdio transports a real MCP WebSocket and APP HTTP.
+Old SSH/key/epoch denied after revocation.
+
+### BSL-029 — Cross-UID secrets and journal boundary (FDR-030-010)
+
+The Chrome GUI UID, restricted SSH transport UID and trusted Controller
+Broker UID are different. Broker-owned journal, private capabilities,
+per-epoch key mapping, relay management handles and durable tombstones
+are unreachable/unmodifiable from Chrome, unauthorized desktop processes
+and Agent test processes. Same-UID 0700 alone is insufficient. The
+Broker IPC checks kernel peer identity **and** server-side permitted
+operation/epoch. Fixed-operation privileged launcher cannot execute
+model-supplied commands or expose unrestricted `systemctl`/sudo.
+
+Acceptance: as Chrome GUI UID and arbitrary non-Broker process, attempts
+to read tokens, alter durable state, connect to management IPC, reach
+other relay, ptrace/read private /proc state or use stolen epoch labels
+are rejected. Test filesystem owner/mode, namespace/mount, inherited
+FDs, peer-credentials and process separation. Broker continues cleanup
+when GUI manager exits.
+
+### BSL-030 — Spike and authorization gate (008–010)
+
+Requirements and design do not prove implementation feasibility. Independent
+Fresh Review is required, followed by executable Spike 0 on both actual
+hosts: SSH forwarding denial + forced stdio, authenticated key-to-epoch
+mapping, binary HTTP/WebSocket, Agent ordinary-netns APP reachability,
+Browser Chrome netns egress, GUI cross-UID launcher, Broker authority
+separation and OpenCode same-MCP identity. If any cannot be proven,
+DESIGN_BLOCKED; no insecure loopback/UDS/general forwarding fallback.
