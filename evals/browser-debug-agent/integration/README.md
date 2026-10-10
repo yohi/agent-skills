@@ -82,7 +82,7 @@ LAN or Tailscale directly.
 Use `npm ci` so the dependency tree is locked:
 
 ```bash
-cd browser-debug-agent-workspace/integration/buggy-app
+cd evals/browser-debug-agent/integration/buggy-app
 npm ci
 npm start
 ```
@@ -101,7 +101,7 @@ Run this inside an active Ubuntu Desktop graphical session (X11/Wayland), not
 from a plain SSH shell:
 
 ```bash
-cd browser-debug-agent-workspace/integration/browser-host
+cd evals/browser-debug-agent/integration/browser-host
 ./start-chrome.sh
 ```
 
@@ -120,7 +120,7 @@ curl -s http://127.0.0.1:9222/json/version
 Set environment variables if needed, then:
 
 ```bash
-cd browser-debug-agent-workspace/integration/ssh-tunnel
+cd evals/browser-debug-agent/integration/ssh-tunnel
 export AGENT_HOST="ai-agent"
 export AGENT_SSH_USER="agent-user"
 export SSH_KEY="$HOME/.ssh/id_ed25519"
@@ -184,7 +184,7 @@ source fix.
 After an eval fixes a bug, restore the known buggy state before the next run:
 
 ```bash
-cd browser-debug-agent-workspace/integration/buggy-app
+cd evals/browser-debug-agent/integration/buggy-app
 npm run fixture:reset              # both bugs ON
 npm run fixture:save-failure       # only settingsSaveFails ON
 npm run fixture:post-login-blank   # only dashboardThrows ON

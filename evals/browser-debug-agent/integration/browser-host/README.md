@@ -37,13 +37,13 @@ endpoint.
 On the Browser Host:
 
 ```bash
-./browser-debug-agent-workspace/integration/browser-host/start-chrome.sh
+./evals/browser-debug-agent/integration/browser-host/start-chrome.sh
 ```
 
 Optional: open a specific URL on start:
 
 ```bash
-./browser-debug-agent-workspace/integration/browser-host/start-chrome.sh http://127.0.0.1:3000
+./evals/browser-debug-agent/integration/browser-host/start-chrome.sh http://127.0.0.1:3000
 ```
 
 ## Verification

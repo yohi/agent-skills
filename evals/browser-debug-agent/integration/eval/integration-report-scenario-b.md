@@ -9,6 +9,9 @@
 - Browser MCP: `chrome-devtools-mcp@1.10.1`
 - Result: `FIX_VERIFIED`
 
+> This report preserves paths as they were recorded during Scenario B. The
+> current evaluation workspace is `evals/browser-debug-agent/`.
+
 ## Branch isolation and PRECHECK
 
 - The Scenario B branch was created directly from `d75d376d17c8558b90f18f1d037fd548455853b3` after the Scenario A branch was committed and clean.

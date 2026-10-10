@@ -61,7 +61,7 @@ export SSH_KEY="$HOME/.ssh/id_ed25519"
 On the Browser Host:
 
 ```bash
-./browser-debug-agent-workspace/integration/ssh-tunnel/setup-tunnel.sh
+./evals/browser-debug-agent/integration/ssh-tunnel/setup-tunnel.sh
 ```
 
 ## Verification

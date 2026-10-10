@@ -9,6 +9,9 @@
 - Browser MCP: `chrome-devtools-mcp@1.10.1`
 - Result: `FIX_VERIFIED`
 
+> This report preserves paths as they were recorded during Scenario A. The
+> current evaluation workspace is `evals/browser-debug-agent/`.
+
 ## PRECHECK and fixture
 
 - Chrome DevTools MCP `list_pages` returned the connected Chrome pages; the target page opened successfully.

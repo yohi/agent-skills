@@ -12,9 +12,9 @@ The integration baseline remains `d75d376d17c8558b90f18f1d037fd548455853b3`. Git
 
 | Scenario | Branch | Commit | Report |
 |---|---|---|---|
-| A — save-failure | `scenario-a-save-failure` | `5d69e89083c05ff1560e095b16090a56d200d5fe` | `browser-debug-agent-workspace/integration/eval/integration-report-scenario-a.md` in the listed commit |
-| B — post-login-blank | `scenario-b-post-login-blank` | `038cc294e085b725c516c1154ce91801572621b0` | `browser-debug-agent-workspace/integration/eval/integration-report-scenario-b.md` in the listed commit |
-| C — tunnel fail-closed | `scenario-c-tunnel-fail-closed` | `37f24c6ec2ad4ccd9391bc3b411954b160096c6a` | `browser-debug-agent-workspace/integration/eval/integration-report-scenario-c.md` in the listed commit |
+| A — save-failure | `scenario-a-save-failure` | `5d69e89083c05ff1560e095b16090a56d200d5fe` | Historical path in commit: `browser-debug-agent-workspace/integration/eval/integration-report-scenario-a.md`; current: `evals/browser-debug-agent/integration/eval/integration-report-scenario-a.md` |
+| B — post-login-blank | `scenario-b-post-login-blank` | `038cc294e085b725c516c1154ce91801572621b0` | Historical path in commit: `browser-debug-agent-workspace/integration/eval/integration-report-scenario-b.md`; current: `evals/browser-debug-agent/integration/eval/integration-report-scenario-b.md` |
+| C — tunnel fail-closed | `scenario-c-tunnel-fail-closed` | `37f24c6ec2ad4ccd9391bc3b411954b160096c6a` | Historical path in commit: `browser-debug-agent-workspace/integration/eval/integration-report-scenario-c.md`; current: `evals/browser-debug-agent/integration/eval/integration-report-scenario-c.md` |
 
 Scenario A/B fixes remain on their respective branches. No scenario changes were merged into the integration baseline.
 
