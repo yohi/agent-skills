@@ -1,0 +1,16 @@
+{
+  "name": "browser-debug-buggy-app",
+  "version": "1.0.0",
+  "description": "Controlled buggy web application for browser-debug-agent integration evaluation",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "start:fixed": "node server.js --fixed",
+    "fixture:reset": "node scripts/reset-fixture.js",
+    "fixture:save-failure": "node scripts/save-failure.js",
+    "fixture:post-login-blank": "node scripts/post-login-blank.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}
