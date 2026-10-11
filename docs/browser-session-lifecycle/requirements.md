@@ -144,7 +144,7 @@ does **not** implement CDP, Chrome process control, or the SSH transport.
 
 No production implementation is authorized by this draft.
 
-## 9. Normative remediation contracts — FDR-030-001–013 and 015
+## 9. Normative remediation contracts — FDR-030-001–013 and 015–019
 
 ### BSL-019 — Lease-scoped revocation and generation fencing (001)
 
@@ -299,7 +299,7 @@ are rejected. Test filesystem owner/mode, namespace/mount, inherited
 FDs, peer-credentials and process separation. Broker continues cleanup
 when GUI manager exits.
 
-### BSL-030 — Spike and authorization gate (008–013, 015)
+### BSL-030 — Spike and authorization gate (008–013, 015–019)
 
 Requirements and design do not prove implementation feasibility. Independent
 Fresh Review is required, followed by executable Spike 0 on both actual
@@ -390,7 +390,10 @@ for example, a trusted launch/registration gate holding MCP/transport
 disabled until verified, paired with Broker-driven fencing on loss of
 attestation. A standalone Plugin-reported `healthy` flag, asynchronous
 heartbeat or startup-only check is **not** sufficient if the guard can be
-removed/bypassed while data streams remain usable.
+removed/bypassed while data streams remain usable. BSL-035–037 define the
+trusted principal, Broker-verifiable authority and synchronized fencing:
+there is no tolerated unguarded data-access interval, including during
+runtime/plugin shutdown, rather than a merely bounded detection delay.
 
 Guard authority, config source, bootstrap ordering, process/instance
 identity, revocation on shutdown or guard disappearance, and privileged
@@ -406,9 +409,12 @@ Acceptance: with the **candidate trusted Supervisor/Broker arrangement**
 (not bare OpenCode alone), deliberately omit the Plugin, break its import,
 alter lower-trust config, race Plugin initialization vs MCP startup, and
 disable/terminate authorization after an ACTIVE lease. In every case,
-all real browser CDP operations are unavailable, existing streams are
-revoked within a bounded fail-closed interval, no unauthorized tool call
-controls Chrome, and no READY or false VERIFIED result is emitted.
+all real browser CDP operations are unavailable, and existing streams are
+fenced **no later than the Guard invalidation linearization point** (or
+are structurally unable to send data after the protected runtime exits).
+Cleanup of already-fenced processes may take bounded time; **no unguarded
+CDP traffic is allowed during any cleanup interval**. No unauthorized tool
+call controls Chrome and no READY or false VERIFIED result is emitted.
 A/B normal operation still works through the **exact same** published MCP
 when the guard is installed. Produce actual MCP-side and Broker-side traces,
 not just tool-list output or an attestation message. Prove absence/teardown
@@ -417,3 +423,130 @@ of the route on a Supervisor restart and cleanup after crash.
 This contract supersedes any interpretation of BSL-031 that assumes
 `tool.execute.before` alone makes an **absent** Plugin fail closed.
 No production code is authorized by this documentation.
+
+### BSL-035 — Supervisor authority and Broker admission (FDR-030-016)
+
+Agent **Browser Runtime Supervisor** is a system-managed, separately
+protected service principal, distinct from ordinary OpenCode/project/test
+process UIDs and from the Agent Broker service principal. Its executable,
+trusted runtime configuration, mandatory Plugin bytes/registration,
+private IPC authority and runtime launch controls are writable only by
+the trusted operator/service administrator, not by project code, model
+tools or other ordinary OpenCode instances. The Supervisor creates a
+new protected Runtime instance and its exact official MCP process in a
+per-lease confined execution domain; it cannot delegate Broker control
+FDs/credentials or protected MCP network namespace access to an
+untrusted session or ordinary Runtime. Separate ordinary OpenCode
+runtimes may exist, but have **no route to the protected MCP/CDP relay**.
+
+Only authenticated Supervisor IPC, validated by the Agent Broker using
+kernel-backed peer/service identity and an unforgeable process-bound
+control channel, can request guard activation. Ordinary OpenCode
+Sessions, alternate Runtime instances and project plugins cannot call
+the protected Broker control entry, attach to its private listener or
+set the authorization state. Same-UID labels and a claimed Runtime ID
+alone never suffice. Project configuration cannot replace, unload or
+reorder the mandatory guard or add an unguarded browser MCP registration
+inside the protected Runtime; either the sealed effective launch
+configuration matches the approved runtime policy or startup fails.
+The Broker enforces its own **CDP ingress denial** until authorization;
+Supervisor's presence alone conveys no CDP permission.
+
+Acceptance: an ordinary Runtime launched without the Plugin, forged
+Supervisor calls/claimed IDs, direct Broker IPC, modified project
+config, inherited FD and unauthorized process/netns joins all fail to
+access the protected CDP/APP authority, while the approved owner
+Runtime works. Record real UID/service identity, IPC peer identity,
+protected config provenance and the data relay's admission decision.
+
+### BSL-036 — Authenticated Guard Activation binding and replay fencing (FDR-030-017)
+
+Only the **trusted Supervisor** may submit a Guard Activation request
+over its authenticated, runtime-instance-bound control connection.
+The **Agent Broker alone** verifies it, decides the authoritative
+Guard admission state and issues a unique, non-transferable, single
+ACTIVE record. Desktop Broker does not accept Plugin/Supervisor
+self-claims: it enforces only the authenticated Agent Broker's fenced
+epoch/connection generation and removes remote data access on loss of
+that authority. The Plugin cannot mint or extend this record.
+
+Broker must bind each record to: verified protected Supervisor/service
+identity; protected Runtime incarnation (never re-used across restart);
+exact OpenCode process/lifetime and effective locked configuration;
+actual loaded guard identity and tested pre-dispatch coverage for
+the installed runtime; official Skill-visible MCP process/registration
+identity; owner OpenCode session; never-reused lease epoch; and the
+Desktop-verified ACTIVE SSH data-connection generation plus connection
+identity. Bind the activation decision to the **actual** runtime+MCP,
+not to a model-supplied label or a separate diagnostic MCP instance.
+The protected startup sequence must prove that its pinned guard is
+loaded and execution hooks are enforced **before** Broker enables a
+single CDP byte (e.g. through trusted runtime startup observation and
+an observed deny-before-dispatch probe), under Supervisor-protected
+immutable runtime/config and executable identity. Merely seeing MCP
+`connected` or Plugin `healthy` cannot activate it.
+
+The Agent Broker holds the sole ACTIVE record under a serialized state
+transition; authentication is kernel-backed control IPC and
+Supervisor-maintained process lifetime, not a reusable bearer value
+exported to user/project/model processes. A monotonic activation
+sequence/unique incarnation identity plus Broker-owned consumed-once
+challenge or equivalent authenticated channel prevents replay/cross-
+runtime reuse. A new Runtime, MCP, session ownership, lease epoch or
+SSH connection generation forces the old binding FENCED; reactivation
+needs fresh proof and active stream teardown. Broker restart begins
+**DENY** and revalidates authoritative live identity, never restores an
+ACTIVE record solely from persisted proof. Agent/Desktop Broker
+generation checks must agree before any new data admission.
+
+Acceptance: forged, duplicated, expired and cross-bound records for
+old Runtime/MCP/owner/epoch/SSH generation are denied; restart/reconnect
+does not revive them. Record issuer and verifier identities, protected
+config hash, incarnation, Broker decision/rejection and stream effects.
+Do not persist reusable proof secrets in logs or project files.
+
+### BSL-037 — Guard invalidation and CDP hard-fence linearization (FDR-030-018)
+
+A valid Guard is a **lifetime invariant** of an ACTIVE protected Runtime:
+its pinned Plugin cannot be dynamically removed/reconfigured while
+that Runtime may dispatch to the protected MCP. A trusted planned
+restart, reload or Plugin disable must **first** atomically mark the
+Agent Broker Guard state FENCING under the same admission lock used for
+OPEN, DATA and ongoing CDP/WebSocket forwarding, reject new operations
+and close/disable all accepted streams, then revoke the corresponding
+Desktop epoch/data generation; only after local effective CDP fencing
+may Supervisor change or terminate the Guard. Untrusted code cannot
+perform an out-of-band Plugin unload.
+
+For unplanned Runtime/Plugin failure, either the failure **cannot leave
+an unguarded live browser-capable Runtime**, because the mandatory
+Guard and MCP data-plane capability are a single protected process/
+kernel-tied lifetime, or every data access is synchronously checked
+against a trusted failure-revoked lifetime in the same admission
+serialization domain. An asynchronous heartbeat or notification with
+a gap during which unguarded OpenCode still dispatches to usable CDP
+is forbidden. When the protected Runtime dies, all its MCP/CDP
+capabilities must be structurally invalidated (including orphaned
+subprocesses, inherited FDs and active WebSockets), without waiting
+for eventual Broker polling. If the installed OpenCode/kernel process
+model cannot prove this invariant, remain DESIGN_BLOCKED; no bounded
+grace period for **security admission** is allowed.
+
+The Agent Broker owns the immediate local ingress/stream fence;
+Desktop Broker applies the authenticated remote epoch/connection
+revocation barrier and durable cleanup. A lost Agent Broker, Supervisor
+or SSH control path must also make the local data plane unavailable
+without waiting for a discretionary callback. Guard invalidation and
+lease/connection fencing are serialized so stale inflight frames and
+old SSH generations cannot re-open a path. **Security fence completion**
+is separate from bounded asynchronous Chrome/process/profile cleanup,
+which may report CLEANUP_PENDING but never permit CDP use.
+
+Acceptance: planned removal, unexpected Runtime/plugin/Supervisor/
+Agent Broker failure, MCP orphan, Broker restart, repeated acquire,
+release-vs-dispatch, existing WebSockets and delayed stream frames
+cannot execute browser operations after the actual Guard invalidation
+point. Trace and compare: Guard ACTIVE/FENCING event, local byte
+admission decision, Desktop generation/epoch revocation, close of
+accepted streams and cleanup. Inject crash/kill and delayed signals;
+any interval accepting unauthorized CDP data is a hard failure.
