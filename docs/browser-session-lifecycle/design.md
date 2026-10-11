@@ -453,39 +453,88 @@ and accepted stream closure. If any window permits unauthorized
 operations after the invalidation linearization point, FAIL,
 irrespective of later bounded cleanup success.
 
-### 5.2 Acquire and actual MCP READY
+### 5.2 Acquire and actual MCP READY (FDR-030-020)
 
-1. Protected Agent Supervisor starts a sealed guarded OpenCode Runtime and
-   its exact official MCP with **Agent Broker data path initially DENY**.
-   Broker authenticates the Supervisor's control channel, runtime/MCP
-   incarnation, mandatory guard hook test and current owner/lease/SSH
-   generation binding. Only a serialized Broker ACTIVE transition enables
-   data, and only while that protected runtime/guard lifetime is intact.
-   If verification fails, keep CDP closed and return BLOCKED. Adapter
-   derives owner from actual runtime context; another owner gets BUSY.
-2. Agent Broker checks SSH trust, GUI seat, Browser Host identity and
-   isolation readiness, plus optional user-authorized APP origin.
-3. Desktop Broker allocates provisional unique CURRENT epoch and private
-   credential/key binding; fixed-operation launcher prepares Chrome
-   namespace, owned relay/app gateway and GUI user-manager Chrome unit.
-4. Verify real Chrome CDP/version inside Chrome netns, Chrome GUI UID/unit,
-   lease-owned relay and browser network/app egress.
-5. Start authenticated Agent-originated forced-command SSH stdio transport,
-   plus isolated Agent MCP CDP proxy and optional ordinary-netns APP gateway.
-6. The **exact Skill-visible OpenCode-registered MCP instance** must
-   invoke `list_pages` **from the lease-owning OpenCode session** through
-   the ACTIVE SSH connection generation. Record nonsecret caller, call,
-   MCP instance, lease epoch and transport generation. A different diagnostic MCP process does not prove
-   READY. If app forwarding is enabled, also validate real end-to-end
-   Chrome-netns APP response.
-7. Only after these succeed, return READY. Failed stage results in bounded
-   compensating revocation, NOT_VERIFIED/BLOCKED and possible
-   CLEANUP_PENDING. The Controller's READY never means a UI scenario
-   is VERIFIED/FIX_VERIFIED.
+**Two-phase Guard verification is mandatory.** `GUARD_VERIFIED` is
+pre-lease evidence that the protected runtime/MCP has a working mandatory
+per-call Guard; it is **not** an authorization to use real Chrome.
+The Agent Broker remains `DENY` for CDP OPEN/DATA and accepted streams
+until the later **full lease + data-generation binding** atomically commits
+`ACTIVE`. The transport's own ACTIVE SSH generation does **not**
+implicitly activate Guard/CDP admission.
+
+1. **Protected bootstrap — DENY / PREPARING.** The protected Agent
+   Supervisor authenticates to Agent Broker, starts a sealed guarded
+   OpenCode Runtime and its exact registered official MCP, and obtains
+   actual owner-session identity from trusted OpenCode execution context.
+   Broker validates Supervisor IPC/Runtime incarnation and protected
+   executable/config provenance. Another lease owner gets
+   `BROWSER_SESSION_BUSY`. No lease epoch or SSH data generation is
+   required at this stage; all real CDP traffic remains denied.
+2. **Preliminary Guard verification — GUARD_VERIFIED / CDP DENY.**
+   Supervisor and Broker establish that the mandatory per-dispatch
+   `tool.execute.before` Guard is actually loaded on the **same**
+   registered MCP, including an observed non-owner deny-before-dispatch
+   probe and trusted process/config binding. This probe does not require
+   a live Chrome data route and must not enable it. The Broker retains
+   only preliminary runtime/MCP/owner evidence; it neither mints a
+   lease-bound ACTIVE record nor reports READY.
+3. **Preflight — CDP DENY.** Agent Broker checks authenticated SSH
+   identity/policy, Browser Host identity, active dedicated GUI seat,
+   isolation readiness and optional user-authorized APP origin. Any
+   failure returns a typed non-READY outcome without changing admission.
+4. **Provisional lease and Chrome — CDP DENY.** Desktop Broker allocates
+   the never-reused provisional lease epoch and key/epoch mapping. The
+   fixed-operation launcher prepares the isolated Chrome namespace,
+   lease-owned relay/APP gateway and dedicated GUI user-manager Chrome
+   unit. Desktop Broker may inspect Chrome CDP/version **inside the
+   Chrome namespace** to prove the owned GUI process and egress, but
+   must not expose its CDP relay to Agent MCP or any other client yet.
+5. **Authenticated data transport — still CDP DENY.** Agent initiates
+   the forced-command `ssh -T` stdio data transport. Desktop Broker
+   authenticates the key-to-epoch connection, establishes the
+   monotonically increasing **ACTIVE SSH data generation** and
+   connection ID, and prepares isolated Agent MCP CDP proxy and any
+   authorized ordinary-netns APP gateway. Transport establishment does
+   **not** admit any CDP OPEN/DATA while Guard state is not ACTIVE;
+   both Brokers enforce the relevant deny gate.
+6. **Full binding and activation — atomic transition to ACTIVE.**
+   Under Agent Broker's serialized Guard/CDP admission authority,
+   revalidate that the preliminary Guard remains effective on the
+   unchanged protected Runtime, exact MCP registration and actual
+   owner session; bind the Supervisor's authenticated process/channel,
+   runtime incarnation, protected config/Guard identity, MCP instance,
+   lease epoch, Desktop-confirmed ACTIVE SSH generation and
+   authenticated connection ID. Apply the consumed-once
+   challenge/activation sequence of §5.1.2 and reject stale or
+   cross-runtime evidence. **Only after all bindings exist and pass**
+   may Broker commit `GUARD_VERIFIED → ACTIVE` and enable that
+   exact lease's CDP data admission. If any binding changed, remain
+   DENY and redo the affected preparation; never provisionally
+   activate a partially bound proof.
+7. **Real same-MCP READY probe — Guard ACTIVE only.** The *exact*
+   Skill-visible, OpenCode-registered official MCP invokes
+   `list_pages` from the lease-owning OpenCode session through the
+   Broker-admitted ACTIVE SSH generation. Record actual source session,
+   call ID, runtime/MCP instance, epoch, connection ID and generation.
+   A successful separate diagnostic MCP does not qualify. If APP
+   forwarding is enabled, also validate real Chrome-netns → authorized
+   APP gateway → Agent ordinary-netns application HTTP response.
+8. **Publish READY or fail closed.** Only after the real same-MCP probe
+   and required APP checks succeed may the adapter return READY.
+   Failure **before Step 6** leaves admission DENY and triggers bounded
+   compensation for provisional owned resources. Failure **during or
+   after Step 6** first serializes `FENCING` with local CDP stream
+   admission, drops existing OPEN/DATA/WebSockets and fences remote
+   epoch/data generation, then performs bounded owned cleanup; report
+   `NOT_VERIFIED`/`BLOCKED` and `CLEANUP_PENDING` separately where
+   applicable. No failed or partial stage returns READY.
 
 Direct MCP calls **before acquire, from Session B while Session A's shared
 MCP is READY, or after release** must be blocked by BOTH runtime per-call
 session authorization and controller transport/network isolation.
+Successful Controller READY never by itself constitutes Skill
+`VERIFIED` or `FIX_VERIFIED`.
 
 ### 5.3 Renewals, session events and cleanup
 
