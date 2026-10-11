@@ -42,7 +42,7 @@ does **not** implement CDP, Chrome process control, or the SSH transport.
 | BSL-004 | Browser Host starts **headful** Chrome in the active, authorized graphical login session, using an isolated automation-only profile. | Browser display/session and profile identity |
 | BSL-005 | Agent-only MCP netns exposes isolated `127.0.0.1:9222` via an owned byte proxy; authenticated Broker selects a lease-unique Desktop UDS relay. No client-chosen SSH `-L` UDS path. | Namespace and stale-tunnel denial |
 | BSL-006 | Optional APP channel connects Desktop Chrome-netns gateway to a trusted Agent gateway in the Agent **ordinary** netns (`127.0.0.1:3000` example); no assumed loopback shared with SSH/MCP namespace. | Real Chrome HTTP 200/known app body and wrong-port denial |
-| BSL-007 | READY requires owning-session-authorized `list_pages` on the exact Skill-visible MCP; **every** browser MCP call must match trusted OpenCode caller, CURRENT lease epoch, MCP instance and ACTIVE SSH data generation. | Session B denial with A READY, instance/epoch/generation trace |
+| BSL-007 | READY requires owning-session-authorized `list_pages` on the exact Skill-visible MCP; **every** browser MCP call must match trusted caller, CURRENT lease/epoch, MCP instance and ACTIVE SSH data generation; independent trusted bootstrap/transport gating must keep browser access disabled when the guard is missing. | Same-MCP A/B dispatch proof plus plugin-absent integration deny |
 | BSL-008 | Repeated acquire by the same owner is idempotent and does not spawn another Chrome/tunnel. | Duplicate calls, same lease |
 | BSL-009 | v1 permits one exclusive browser owner per Browser Host; another session gets `BROWSER_SESSION_BUSY` without stealing it. | Concurrent acquisition test |
 | BSL-010 | A release stops **only** the authenticated lease's tunnel and Chrome; no `pkill ssh`, broad service stop, or manipulation of personal Chrome. | Process/unit ownership assertions |
@@ -121,8 +121,12 @@ does **not** implement CDP, Chrome process control, or the SSH transport.
 - Verify the **installed OpenCode V1** gives a trustworthy originating
   `sessionID` for each browser MCP tool call, including aliases, helpers,
   nested sessions and concurrent calls, and that failed authorization
-  prevents actual dispatch. If reliable tool hooks are unavailable, prove
-  true per-session MCP publication **and routing isolation**; otherwise BLOCKED.
+  prevents actual dispatch. **Also prove independent trusted bootstrap and
+  MCP/CDP admission fencing** when the authorization Plugin is absent,
+  omitted by project config, fails to load or disappears after READY. Native
+  OpenCode does not provide automatic fail-closed semantics for absent
+  Plugins. If reliable hooks and protected bootstrap are unavailable,
+  prove truly per-session MCP publication/routing isolation; otherwise BLOCKED.
 - Verify READY and later browser actions use the same MCP process, tied to
   CURRENT lease owner, epoch and Broker ACTIVE SSH connection generation.
 - Verify Agent-originated SSH **forced-command stdio** (not native
@@ -316,7 +320,10 @@ parallel calls and distinct child/subagent sessions; no implicit inherited
 owner privileges. Unrecognized tools, missing identity, unguarded/bypassing
 entrypoints or failure to install the mandatory guard deny access. A shared
 MCP process's isolated TCP listener does NOT by itself authorize a second
-OpenCode session to call that MCP. Revoke in-flight streams on lease loss.
+OpenCode session to call that MCP. The Plugin **cannot enforce its own
+presence**: protected launcher/Supervisor and an independent Broker gate
+must deny browser transport if the mandatory Plugin is not attested, not
+loaded or becomes unavailable. Revoke in-flight streams on lease loss.
 
 Preferred: installed OpenCode V1 `tool.execute.before` with trustworthy
 `sessionID` and tested throw-aborts-dispatch semantics plus protected hook
@@ -359,3 +366,53 @@ GUI user-manager linger is not the primary cleanup guarantee.
 Acceptance: inspect §8, Design and Spike 0 for any contradictory live
 SSH forwarding, ownership, UID or watchdog contracts. Historical
 superseded designs may be mentioned only as explicit non-goals.
+
+### BSL-034 — Fail-closed MCP publication and trusted guard bootstrap (FDR-030-015)
+
+Run 003 proved that OpenCode 1.18.35 delivers MCP `tools/call` when the
+authorization Plugin is **absent** from an otherwise functional config.
+OpenCode does not automatically fail closed in this case. Therefore the
+per-call `tool.execute.before` guard is **necessary but not sufficient**
+as the only admission boundary.
+
+The Agent **trusted Supervisor/Agent Broker** (not a model, project plugin or
+mutable project config) must control the OpenCode execution profile and
+browser MCP lifecycle. A browser-capable lease cannot be marked READY, and
+the authorized Chrome/CDP data route cannot be admitted, unless a
+**protected startup/registration handshake** demonstrates that the
+guard is loaded, mandatory for the exact owning OpenCode runtime, and
+covers the published MCP instance and actual source-session dispatch.
+MCP discovery by itself is not proof of this handshake. At least one
+independent enforcement control must reside *outside the optional Plugin*
+and prevent access to real browser data when the Plugin is absent:
+for example, a trusted launch/registration gate holding MCP/transport
+disabled until verified, paired with Broker-driven fencing on loss of
+attestation. A standalone Plugin-reported `healthy` flag, asynchronous
+heartbeat or startup-only check is **not** sufficient if the guard can be
+removed/bypassed while data streams remain usable.
+
+Guard authority, config source, bootstrap ordering, process/instance
+identity, revocation on shutdown or guard disappearance, and privileged
+trust boundary must be testable. Untrusted project configuration and
+other sessions must not enable a shared MCP with reachable Chrome CDP
+while lacking the mandatory authorization check. If the target OpenCode
+runtime cannot provide a protected, enforceable chain, use independently
+reviewed per-session process/publication/routing isolation or return
+DESIGN_BLOCKED; do not silently treat native OpenCode's unguarded MCP
+as secure.
+
+Acceptance: with the **candidate trusted Supervisor/Broker arrangement**
+(not bare OpenCode alone), deliberately omit the Plugin, break its import,
+alter lower-trust config, race Plugin initialization vs MCP startup, and
+disable/terminate authorization after an ACTIVE lease. In every case,
+all real browser CDP operations are unavailable, existing streams are
+revoked within a bounded fail-closed interval, no unauthorized tool call
+controls Chrome, and no READY or false VERIFIED result is emitted.
+A/B normal operation still works through the **exact same** published MCP
+when the guard is installed. Produce actual MCP-side and Broker-side traces,
+not just tool-list output or an attestation message. Prove absence/teardown
+of the route on a Supervisor restart and cleanup after crash.
+
+This contract supersedes any interpretation of BSL-031 that assumes
+`tool.execute.before` alone makes an **absent** Plugin fail closed.
+No production code is authorized by this documentation.

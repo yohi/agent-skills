@@ -1,10 +1,10 @@
 # Browser Session Lifecycle Integration — Technical Design
 
-Status: FRESH DESIGN REVIEW PASS — SPIKE 0 AUTHORIZED; PRODUCTION IMPLEMENTATION NOT_AUTHORIZED
+Status: RUN-003-DRIVEN DESIGN AMENDMENT — FRESH INDEPENDENT REVIEW REQUIRED; SPIKE 0 INCOMPLETE; PRODUCTION IMPLEMENTATION NOT_AUTHORIZED
 Date: 2026-10-10 (JST)
 Requirements: [requirements.md](requirements.md)
-Review baseline: FDR-030-001..013 (all resolved; FDR-030-014 is non-blocking PR metadata/header synchronization)
-Design review evidence: Independent Fresh Design Review of commit `59a76977c4217278df2791efdb6fd0ccd053e820`, dated 2026-10-10.
+Prior approved review baseline: FDR-030-001..013 resolved on commit `59a76977c4217278df2791efdb6fd0ccd053e820` (2026-10-10).
+Current amendment: FDR-030-015 from Spike 0 Run `spike-0-20261011-003`; the prior Design Review PASS does **not** approve this amended blob.
 
 ## 1. Decision: Skill-owned workflow, Broker-owned connections
 
@@ -269,11 +269,70 @@ wrong/missing IDs, aliases, child sessions, guard failure, disabled
 plugin, direct invocation path and call-vs-revoke race. Audit non-secret
 caller ID, call ID, MCP identity, epoch and generation.
 
+#### 5.1.1 Protected OpenCode bootstrap and MCP fail-closed gate (FDR-030-015)
+
+**Run 003 finding:** OpenCode 1.18.35 can dispatch MCP tools even if
+the session-authorization Plugin is **not configured**. Its native
+`tool.execute.before` hook is a usable guard when present, but the Plugin
+cannot refuse an execution in which it never loads. Thus native OpenCode
+MCP registration must **not** constitute the security enforcement boundary.
+
+The Agent trusted Supervisor and Broker must control the browser-capable
+OpenCode runtime launch, protected Plugin/config source, authorized MCP
+publication and access to real CDP. Successful `tools/list` or MCP
+`connected` is *not* a security-readiness signal. A trusted startup
+protocol must attest the actual guard-loaded OpenCode runtime process,
+registered MCP identity, owner session and Broker lease before allowing
+any real browser CDP data. This authority cannot be supplied by a
+model-controlled tool parameter or a mutable project-level config.
+
+**Minimum external gate:** the Broker must keep its isolated CDP data
+relay closed (and not return READY) whenever it lacks a valid
+runtime-bound guard-activation proof. If guard activation fails, MCP
+may exist as a non-browser test fixture but cannot reach actual Chrome.
+When guard authority is withdrawn, runtime restarts/reloads without
+protection, or protected Plugin/config health cannot be established,
+fence admission and **close accepted WebSockets/streams**, then revoke
+the lease as needed. A one-time `plugin_loaded=true` flag or
+standalone heartbeat is inadequate unless a non-bypassable supervisor
+proves lifetime binding and revokes access at the precise trust boundary.
+The guard remains authoritative for **each individual source-session
+tool dispatch**; the Broker bootstrap check does not replace BSL-031.
+
+Allowed approaches to prove in Spike 0:
+1. A trusted, fixed-configuration OpenCode launcher with protected
+   Plugin loading, runtime-instance-bound attestation and Broker-owned
+   **transport registration/enablement gate**, including fail-closed
+   release on process/guard disappearance; or
+2. A separately reviewed per-session MCP execution/routing boundary
+   which does not expose one session's Chrome to another even if the
+   project Plugin is absent.
+
+No approach is claimed proven until the installed OpenCode runtime and
+Controller behavior are tested. The Supervisor must not claim that
+ordinary OpenCode refuses bare unguarded MCP calls: Run 003 proves
+otherwise. If a pluginless configuration can access a live protected
+Chrome/CDP route, this design fails and production implementation stays
+BLOCKED.
+
+**Required negative controls (candidate integration, not naked MCP):**
+Plugin omitted, import throws, bad load order, project config override,
+startup race with MCP registration, protected runtime restart, and
+guard loss *during* active WebSocket/another OpenCode session's call.
+Prove no successful unauthorized browser operation, no usable CDP
+ingress and no READY; independently verify intended owner still works
+with the mandatory guard correctly loaded. Collect the fake MCP
+`tools/call` and trusted Broker relay logs to distinguish tool-level
+denial from data-plane fencing.
+
 ### 5.2 Acquire and actual MCP READY
 
-1. Adapter derives authoritative owner from runtime context and **requires
-   non-bypassable pre-dispatch authorization** for all MCP tools; without
-   a proven guard, BLOCKED. Different owner gets BROWSER_SESSION_BUSY.
+1. Trusted Agent Supervisor establishes an **attested guarded OpenCode
+   runtime + protected MCP/CDP publication/transport gate** before real
+   browser ingress; if guard is missing, prevent data access and return
+   BLOCKED regardless of a connected MCP. Adapter derives owner from
+   trusted runtime context and requires per-dispatch authorization;
+   different owner gets BROWSER_SESSION_BUSY.
 2. Agent Broker checks SSH trust, GUI seat, Browser Host identity and
    isolation readiness, plus optional user-authorized APP origin.
 3. Desktop Broker allocates provisional unique CURRENT epoch and private
@@ -351,6 +410,7 @@ CLEANUP_PENDING separately from browser verification outcome.
 | **FDR-030-011** | Session A READY; B's calls to same MCP `list_pages`/`navigate_page`/third tool are denied before dispatch, including concurrent/alias/child attempts |
 | **FDR-030-012** | Within same epoch, keep old SSH N alive, connect N+1; N's streams, WebSockets, delayed frames and renewals fail, no dual ACTIVE generation |
 | **FDR-030-013** | Requirements §8 and Spike 0 contain only forced SSH stdio, Broker UDS and independent Broker watchdog as normative contract |
+| **FDR-030-015** | With candidate Supervisor/Broker and live test CDP, omit/break/unload Plugin or override project config: no browser action/READY; guard shutdown revokes active streams; normal A/B still enforce source session |
 | Stdio transport reliability | Real Chrome DevTools MCP long-lived WS and concurrent APP HTTP over binary framing; failure/backpressure/truncation bounded |
 | Browser networking | Chrome netns DNS/HTTPS egress; optional APP channel correct; no CDP exposure to shared loopback |
 | Existing Integration A/B/C | A/B same-scenario FIX_VERIFIED evidence unaffected; C fail-closed NOT_VERIFIED/BLOCKED |
@@ -364,11 +424,14 @@ are required; mocked unit tests are insufficient.
 
 ## 7. Stage gates and limitations
 
-**Fresh Design Review: PASS. Spike 0: AUTHORIZED / NOT_STARTED. Production Implementation: NOT_AUTHORIZED.**
+**Prior Fresh Design Review: PASS for immutable `59a76977` baseline only. Current amended Design: FRESH REVIEW REQUIRED. Spike 0: INCOMPLETE / Gate H still unapproved. Production Implementation: NOT_AUTHORIZED.**
 
-- **Spike 0, executable contracts**: prove installed OpenCode V1
-  **per-call authenticated session gating on same shared MCP** (including
-  child sessions/alias/bypass), same-MCP identity; SSH forced stdio,
+- **Spike 0, executable contracts**: Run 003 showed installed OpenCode V1
+  MCP per-call session checks work when Plugin is present but absent Plugin
+  permits unguarded MCP. Prove the **trusted Supervisor/Broker bootstrap,
+  config protection and data-plane deny** with missing/failed/removed
+  Plugin and in-flight stream cleanup (FDR-030-015), then complete alias
+  and release races. Also prove SSH forced stdio,
   **same-epoch connection-generation fencing**, key/epoch mapping,
   binary transport, GUI launcher, secrets, independent Broker reaper,
   network isolation and Agent ordinary-netns app access.
