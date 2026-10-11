@@ -37,6 +37,10 @@ evidence, not asserted to exist.
 
 ## FDR-030-016–019 — Mandatory BSL-034 closure matrix
 
+**FDR-030-019 (Moderate)** closes only when this supplemental case-to-evidence
+matrix is used for SP0-11 with the original immutable Spike 0 plan. Case
+coverage is mandatory regardless of whether Run 003 proved tool-hook dispatch.
+
 Original `spike-0-verification-plan.md` remains immutable for Run 001–003.
 This addendum **extends** SP0-01, SP0-03, SP0-05, SP0-06, SP0-08, SP0-09
 and SP0-11 for new runs; an agent MUST use both matrices and the approved
