@@ -144,7 +144,7 @@ does **not** implement CDP, Chrome process control, or the SSH transport.
 
 No production implementation is authorized by this draft.
 
-## 9. Normative remediation contracts — FDR-030-001 through 010
+## 9. Normative remediation contracts — FDR-030-001–013 and 015
 
 ### BSL-019 — Lease-scoped revocation and generation fencing (001)
 
@@ -237,7 +237,8 @@ READY must fail. Compare instance/epoch identity for probe and actual calls.
 
 ### BSL-026 — Implementation authorization gate
 
-All thirteen corrections must pass independent Design Review and the real
+All blocking design corrections and subsequent evidence-driven amendments
+must pass independent Design Review and the real
 two-host contract spike before implementation is authorized. Inability to
 prove the host GUI/namespace/egress model, localhost CDP isolation,
 SSH forced-command authentication, Broker separation, Agent APP routing,
@@ -298,7 +299,7 @@ are rejected. Test filesystem owner/mode, namespace/mount, inherited
 FDs, peer-credentials and process separation. Broker continues cleanup
 when GUI manager exits.
 
-### BSL-030 — Spike and authorization gate (008–013)
+### BSL-030 — Spike and authorization gate (008–013, 015)
 
 Requirements and design do not prove implementation feasibility. Independent
 Fresh Review is required, followed by executable Spike 0 on both actual
